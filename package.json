@@ -11,20 +11,27 @@
     "build"
   ],
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755') && require('fs').chmodSync('build/http-server.js', '755')\"",
     "prepare": "npm run build",
     "watch": "tsc --watch",
-    "inspector": "npx @modelcontextprotocol/inspector build/index.js"
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "start:http": "node build/http-server.js",
+    "dev:http": "tsx watch src/http-server.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "0.6.0",
+    "@modelcontextprotocol/sdk": "^1.20.2",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.0",
+    "express": "^4.21.2",
     "neo4j-driver": "^5.27.0",
     "uuid": "^11.0.4"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
     "@types/node": "^20.11.24",
     "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.3.3"
   },
   "keywords": [

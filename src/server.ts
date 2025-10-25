@@ -1,5 +1,5 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Neo4jClient } from './neo4j-client.js';
 import { Neo4jServerConfig } from './types.js';
@@ -28,10 +28,6 @@ export class Neo4jServer {
 
     // Error handling
     this.server.onerror = (error) => console.error('[MCP Error]', error);
-    process.on('SIGINT', async () => {
-      await this.close();
-      process.exit(0);
-    });
   }
 
   private setupToolHandlers(): void {
@@ -58,10 +54,12 @@ export class Neo4jServer {
     });
   }
 
-  async run(): Promise<void> {
-    const transport = new StdioServerTransport();
+  async connect(transport: Transport): Promise<void> {
     await this.server.connect(transport);
-    console.error('Neo4j MCP server running on stdio');
+  }
+
+  getServer(): Server {
+    return this.server;
   }
 
   async close(): Promise<void> {

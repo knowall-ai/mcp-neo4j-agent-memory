@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "Bash(powershell -Command \"(Get-Content ''H:\\GitHub\\mcp-neo4j-agent-memory\\README.md'').Count\")",
+      "Bash(npm install:*)",
+      "Bash(curl:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(npm run build:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

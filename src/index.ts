@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Neo4jServer } from './server.js';
 
 // Debug environment for Smithery
@@ -41,10 +42,13 @@ const config = hasDbConfig ? {
   database: process.env.NEO4J_DATABASE?.trim() || undefined, // Optional for Neo4j Community Edition
 } : undefined;
 
-// サーバーの起動
+// サーバーの起動 (STDIO transport)
 const server = new Neo4jServer(config);
+const transport = new StdioServerTransport();
 
-server.run().catch((error) => {
+server.connect(transport).then(() => {
+  console.error('Neo4j MCP server running on stdio');
+}).catch((error) => {
   console.error('Failed to start Neo4j MCP server:', error);
   process.exit(1);
 });

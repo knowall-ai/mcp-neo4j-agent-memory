@@ -1,7 +1,9 @@
 # Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
 
 startCommand:
-  type: stdio
+  type: http
+  port: 3000
+  healthCheckPath: /health
   configSchema:
     # JSON Schema defining the configuration options for the MCP.
     type: object
@@ -23,8 +25,8 @@ startCommand:
         type: string
         default: neo4j
         description: The database name for Neo4j Enterprise (optional).
-  commandFunction:
-    # A function that produces the CLI command to start the MCP on stdio.
+  environmentVariables:
+    # Map configuration to environment variables
     |-
     config => {
       const env = {};
@@ -32,5 +34,5 @@ startCommand:
       if (config.neo4jUsername) env.NEO4J_USERNAME = config.neo4jUsername;
       if (config.neo4jPassword) env.NEO4J_PASSWORD = config.neo4jPassword;
       if (config.neo4jDatabase) env.NEO4J_DATABASE = config.neo4jDatabase;
-      return {command: 'node', args: ['build/index.js'], env};
+      return env;
     }

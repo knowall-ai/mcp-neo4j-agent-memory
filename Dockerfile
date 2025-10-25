@@ -31,5 +31,11 @@ COPY --from=builder /app/node_modules ./node_modules
 # Don't set default environment variables to ensure proper tool discovery
 # These should be provided at runtime
 
-# Specify the command to run the application
-ENTRYPOINT ["node", "build/index.js"]
+# Expose HTTP port
+EXPOSE 3000
+
+# Set default PORT environment variable
+ENV PORT=3000
+
+# Specify the command to run the HTTP server
+ENTRYPOINT ["node", "build/http-server.js"]

@@ -180,6 +180,96 @@ cp .env.example .env
 #### For Claude Desktop
 Add the environment variables to your Claude Desktop configuration (see Quick Start above).
 
+## Transport Modes
+
+The MCP server supports two transport modes to fit different deployment scenarios:
+
+### STDIO Mode (Default)
+
+The traditional MCP transport for local desktop integration:
+
+```bash
+# Run locally
+npm run build
+node build/index.js
+
+# Or via npx
+npx @knowall-ai/mcp-neo4j-agent-memory
+```
+
+**Best for:**
+- Claude Desktop integration
+- Local development
+- Traditional MCP client applications
+
+### HTTP Mode (Streamable HTTP)
+
+Stateless HTTP server for cloud deployments using MCP's Streamable HTTP transport:
+
+```bash
+# Build and start HTTP server
+npm run build
+npm run start:http
+
+# Or for development with auto-reload
+npm run dev:http
+
+# Server runs on port 3000 by default
+# Override with: PORT=8080 npm run start:http
+```
+
+**Best for:**
+- Azure Container Apps deployment
+- Smithery cloud hosting
+- Azure AI Foundry integration
+- Multi-client scenarios
+- Scalable cloud deployments
+
+**Architecture:**
+- Stateless request handling - each request gets a new server/transport instance
+- Automatic cleanup on connection close
+- Prevents request ID collisions
+- Scales horizontally without session state
+
+#### HTTP Endpoints
+
+- **POST `/mcp`** - Handle MCP requests
+  - Accepts standard MCP JSON-RPC requests
+  - Each request is handled independently (stateless)
+  - Transport manages session IDs internally via SDK
+
+- **GET `/health`** - Health check endpoint
+  - Returns server status and timestamp
+  - Used by Azure Container Apps health probes
+
+#### Docker Deployment
+
+```bash
+# Build Docker image
+docker build -t mcp-neo4j-memory .
+
+# Run with HTTP transport
+docker run -p 3000:3000 \
+  -e NEO4J_URI=bolt://your-host:7687 \
+  -e NEO4J_USERNAME=neo4j \
+  -e NEO4J_PASSWORD=your-password \
+  mcp-neo4j-memory
+```
+
+#### Azure Container Apps
+
+For detailed Azure deployment instructions, see [Azure Deployment Guide](./docs/azure-deployment.md).
+
+Quick deploy:
+```bash
+az containerapp up \
+  --name mcp-neo4j-memory \
+  --source . \
+  --target-port 3000 \
+  --ingress external \
+  --env-vars NEO4J_URI=bolt://host:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=secret
+```
+
 ## Usage Examples
 
 The LLM handles all the complexity of deciding what to store and how to connect memories:
