@@ -1,3 +1,5 @@
+[![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
+
 # Neo4j Agent Memory MCP Server
 
 ![Neo4j Agent Memory Banner](./images/neo4j-agent-memory-05.png)
