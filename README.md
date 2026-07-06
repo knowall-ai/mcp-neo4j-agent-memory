@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/knowall-ai-mcp-neo4j-agent-memory-badge.png)](https://mseep.ai/app/knowall-ai-mcp-neo4j-agent-memory)
+
 [![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
 
 # Neo4j Agent Memory MCP Server
