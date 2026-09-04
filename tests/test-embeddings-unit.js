@@ -3,6 +3,7 @@
 import assert from 'assert';
 import { cosine, createEmbedder, embeddingText, nameText, scrub } from '../build/embeddings.js';
 import { keywordMatches, rank } from '../build/search.js';
+import { contentKeys, factLikeKeys, maxProperties } from '../build/hygiene.js';
 
 function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} ≈ ${expected}`);
@@ -95,6 +96,16 @@ try {
 
   assert.strictEqual(keywordMatches('Ben Weeks', { name: 'Benjamin' }), true);
   assert.strictEqual(keywordMatches('Benjamin', { name: 'Ben' }), false);
+
+  const bloated = {
+    name: 'Ben Weeks', email: 'ben@example.com', _id: 1, _labels: ['Person'], created_at: 'x', embedding: [1],
+    live_call_camera_failure_2026_07_31: 'short', role: 'Founder',
+    preference: 'A very long piece of prose that is clearly an episode rather than an attribute of the person, well over the limit for a plain attribute value.'
+  };
+  assert.deepStrictEqual(contentKeys(bloated), ['name', 'email', 'live_call_camera_failure_2026_07_31', 'role', 'preference']);
+  assert.deepStrictEqual(factLikeKeys(bloated), ['live_call_camera_failure_2026_07_31', 'preference']);
+  assert.strictEqual(maxProperties({}), 30);
+  assert.strictEqual(maxProperties({ REVERIE_MAX_PROPERTIES: '12' }), 12);
 
   console.log('PASS test-embeddings-unit: embeddings helpers and hybrid ranking behave as expected');
 } catch (error) {
