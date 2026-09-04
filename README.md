@@ -105,6 +105,7 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
   - Build complex knowledge networks
 
 - `update_memory`: Update properties of existing memories
+  - Returns a `_hint` when the node exceeds the property limit: the graph is for entities and relationships, not a notebook
   - Add or modify any property
   - Set properties to null to remove them
 
@@ -134,6 +135,7 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 
 - `dream`: Deterministically clean up and consolidate the graph
   - Relabels lowercase labels to their Capitalised form (`person` → `Person`), merges duplicate names within a label when APOC is available, and refreshes embeddings
+  - Reports `bloated` nodes (more than `REVERIE_MAX_PROPERTIES`, default 30, real properties) with the keys that look like dated facts or prose, so a nightly sleep can fold them into attributes, relationships or notes
   - Supports `dry_run` for a no-write report
 
 - `get_guidance`: Get help on using the memory tools effectively

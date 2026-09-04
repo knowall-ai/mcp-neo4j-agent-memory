@@ -2,6 +2,7 @@ import { CallToolResult, ErrorCode, McpError } from '@modelcontextprotocol/sdk/t
 import neo4j from 'neo4j-driver';
 import { Embedder, embedNodes, scrub } from '../embeddings.js';
 import { Neo4jClient } from '../neo4j-client.js';
+import { bloatHint, contentKeys, factLikeKeys, maxProperties } from '../hygiene.js';
 import { Candidate, Ranked, SearchMode, rank } from '../search.js';
 import {
   isCreateConnectionArgs,
@@ -174,6 +175,14 @@ export async function handleToolCall(
           ? result.memory._labels[0]
           : 'Memory';
         await embedNodeIfPossible(neo4jClient, embedder, result?.memory, label, 'update_memory');
+
+        if (result?.memory) {
+          const count = contentKeys(result.memory).length;
+          const limit = maxProperties();
+          if (count > limit) {
+            result.memory._hint = bloatHint(String(result.memory.name ?? args.nodeId), count, limit);
+          }
+        }
         return jsonResult(result);
       }
 
@@ -418,12 +427,18 @@ export async function handleToolCall(
           ? simulateOrphansAfterMerge(currentOrphanRow?.count ?? 0, duplicates)
           : currentOrphanRow?.count ?? 0;
 
+        const bloated = await findBloatedNodes(neo4jClient, maxProperties());
+        if (bloated.length > 0) {
+          notes.push(`${bloated.length} node(s) exceed ${maxProperties()} properties; split their fact-like keys into their own memories (see bloated)`);
+        }
+
         return jsonResult({
           dry_run: dryRun,
           relabelled,
           merged,
           reembedded,
           orphans,
+          bloated,
           apoc_available: apocAvailable,
           notes
         });
@@ -599,6 +614,36 @@ async function fetchMemories(
   }
 
   return neo4jClient.executeQuery(finalQuery, { memoryIds });
+}
+
+interface BloatedNode {
+  id: number;
+  label: string;
+  name: string;
+  properties: number;
+  fact_like_keys: string[];
+}
+
+/** Nodes carrying more than `limit` real properties, worst first, with the keys that should become their own memories. */
+async function findBloatedNodes(neo4jClient: Neo4jClient, limit: number): Promise<BloatedNode[]> {
+  const rows = await neo4jClient.executeQuery<{ id: number; label: string; props: Record<string, unknown> }>(
+    `MATCH (n)
+     WHERE coalesce(n.status, '') <> 'archived' AND size(keys(n)) > $limit
+     RETURN id(n) AS id, labels(n)[0] AS label, properties(n) AS props`,
+    { limit: neo4j.int(limit) }
+  );
+
+  return rows
+    .map((row) => ({
+      id: row.id,
+      label: row.label || 'Memory',
+      name: String(row.props.name ?? row.id),
+      properties: contentKeys(row.props).length,
+      fact_like_keys: factLikeKeys(row.props).slice(0, 25)
+    }))
+    .filter((node) => node.properties > limit)
+    .sort((left, right) => right.properties - left.properties)
+    .slice(0, 20);
 }
 
 function jsonResult(value: unknown): CallToolResult {
