@@ -17,6 +17,8 @@ export interface SearchMemoriesArgs {
   order_by?: string;
   limit?: number;
   since_date?: string;
+  search_mode?: 'hybrid' | 'keyword' | 'semantic';
+  similarity_threshold?: number;
 }
 
 export interface CreateConnectionArgs {
@@ -52,6 +54,19 @@ export interface ListMemoryLabelsArgs {
   // No arguments needed for this tool
 }
 
+export interface QueryMemoriesArgs {
+  cypher: string;
+  params?: Record<string, any>;
+}
+
+export interface MemoryStatsArgs {
+  // No arguments needed for this tool
+}
+
+export interface DreamArgs {
+  dry_run?: boolean;
+}
+
 export function isCreateMemoryArgs(args: unknown): args is CreateMemoryArgs {
   return typeof args === 'object' && args !== null && typeof (args as CreateMemoryArgs).label === 'string' && typeof (args as CreateMemoryArgs).properties === 'object';
 }
@@ -60,7 +75,13 @@ export function isSearchMemoriesArgs(args: unknown): args is SearchMemoriesArgs 
   if (typeof args !== 'object' || args === null) return false;
   const searchArgs = args as SearchMemoriesArgs;
   if (searchArgs.query !== undefined && typeof searchArgs.query !== 'string') return false;
+  if (searchArgs.label !== undefined && typeof searchArgs.label !== 'string') return false;
+  if (searchArgs.depth !== undefined && typeof searchArgs.depth !== 'number') return false;
+  if (searchArgs.order_by !== undefined && typeof searchArgs.order_by !== 'string') return false;
+  if (searchArgs.limit !== undefined && typeof searchArgs.limit !== 'number') return false;
   if (searchArgs.since_date !== undefined && typeof searchArgs.since_date !== 'string') return false;
+  if (searchArgs.search_mode !== undefined && !['hybrid', 'keyword', 'semantic'].includes(searchArgs.search_mode)) return false;
+  if (searchArgs.similarity_threshold !== undefined && typeof searchArgs.similarity_threshold !== 'number') return false;
   return true;
 }
 
@@ -113,6 +134,24 @@ export function isDeleteConnectionArgs(args: unknown): args is DeleteConnectionA
 }
 
 export function isListMemoryLabelsArgs(args: unknown): args is ListMemoryLabelsArgs {
-  // This tool doesn't require any arguments, so just check it's an object
   return typeof args === 'object' && args !== null;
+}
+
+export function isQueryMemoriesArgs(args: unknown): args is QueryMemoriesArgs {
+  if (typeof args !== 'object' || args === null) return false;
+  const queryArgs = args as QueryMemoriesArgs;
+  if (typeof queryArgs.cypher !== 'string') return false;
+  if (queryArgs.params !== undefined && (typeof queryArgs.params !== 'object' || queryArgs.params === null || Array.isArray(queryArgs.params))) return false;
+  return true;
+}
+
+export function isMemoryStatsArgs(args: unknown): args is MemoryStatsArgs {
+  return typeof args === 'object' && args !== null;
+}
+
+export function isDreamArgs(args: unknown): args is DreamArgs {
+  if (typeof args !== 'object' || args === null) return false;
+  const dreamArgs = args as DreamArgs;
+  if (dreamArgs.dry_run !== undefined && typeof dreamArgs.dry_run !== 'boolean') return false;
+  return true;
 }

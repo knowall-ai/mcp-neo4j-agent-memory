@@ -1,7 +1,7 @@
 {
   "name": "@knowall-ai/reverie",
-  "version": "0.3.0",
-  "description": "Reverie \u2014 graph memory that dreams. Graph-based memory system for AI agents. Store people, places, organizations as nodes. Build semantic relationships (KNOWS, WORKS_AT, CREATED). Word-tokenized search finds partial matches. Filter by date, traverse relationships, maintain temporal context. Simple tools, LLM handles complexity. 10 tools for complete memory management.",
+  "version": "0.4.0",
+  "description": "Reverie — graph memory that dreams. Graph-based memory system for AI agents. Store people, places, organizations as nodes. Build semantic relationships (KNOWS, WORKS_AT, CREATED). Hybrid keyword + semantic search finds partial matches and close variants. Filter by date, traverse relationships, maintain temporal context. Simple tools, LLM handles complexity. 13 tools for complete memory management.",
   "type": "module",
   "module": "./src/index.ts",
   "bin": {
@@ -15,9 +15,12 @@
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "prepare": "npm run build",
     "watch": "tsc --watch",
-    "inspector": "npx @modelcontextprotocol/inspector build/index.js"
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "test": "node tests/run-all-tests.js",
+    "test:unit": "node tests/test-embeddings-unit.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "0.6.0",
     "dotenv": "^17.2.0",
     "neo4j-driver": "^5.27.0",
