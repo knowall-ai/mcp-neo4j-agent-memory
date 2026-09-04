@@ -13,7 +13,7 @@ A specialized MCP server that bridges Neo4j graph database with AI agents, provi
 You can run this MCP server directly using npx:
 
 ```bash
-npx @knowall-ai/reverie
+npx @knowall-ai/mcp-neo4j-agent-memory   # becomes `npx @knowall-ai/reverie` once 0.4.0 is published
 ```
 
 Or add it to your Claude Desktop configuration:
@@ -23,7 +23,7 @@ Or add it to your Claude Desktop configuration:
   "mcpServers": {
     "neo4j-memory": {
       "command": "npx",
-      "args": ["@knowall-ai/reverie"],
+      "args": ["@knowall-ai/mcp-neo4j-agent-memory"],
       "env": {
         "NEO4J_URI": "bolt://localhost:7687",
         "NEO4J_USERNAME": "neo4j",
