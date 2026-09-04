@@ -2,7 +2,7 @@
 
 # Reverie — graph memory that dreams
 
-**Reverie** is KnowAll AI's Neo4j knowledge-graph memory for AI agents, served over MCP. Formerly published as `@knowall-ai/mcp-neo4j-agent-memory`; the GitHub repository is now `knowall-ai/mcp-reverie` (old URLs redirect) and the old package name keeps working as an alias.
+**Reverie** is KnowAll AI's Neo4j knowledge-graph memory for AI agents, served over MCP. Until `@knowall-ai/reverie` is published to npm, install the legacy package `@knowall-ai/mcp-neo4j-agent-memory` (0.2.x). The GitHub repository is now `knowall-ai/mcp-reverie`, and old URLs redirect.
 
 ![Reverie Banner](./images/neo4j-agent-memory-05.png)
 
