@@ -2,7 +2,7 @@
 # Script to push to KnowAll-AI organization
 
 # Update remote URL
-git remote set-url origin https://github.com/KnowAll-AI/mcp-neo4j-agent-memory.git
+git remote set-url origin https://github.com/knowall-ai/mcp-reverie.git
 
 # Verify the change
 echo "New remote URL:"
@@ -12,4 +12,4 @@ git remote -v
 git push -u origin main
 git push --tags
 
-echo "✅ Repository pushed to KnowAll-AI/mcp-neo4j-agent-memory"
+echo "✅ Repository pushed to knowall-ai/mcp-reverie"

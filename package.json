@@ -48,10 +48,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/KnowAll-AI/mcp-neo4j-agent-memory.git"
+    "url": "git+https://github.com/knowall-ai/mcp-reverie.git"
   },
   "bugs": {
-    "url": "https://github.com/KnowAll-AI/mcp-neo4j-agent-memory/issues"
+    "url": "https://github.com/knowall-ai/mcp-reverie/issues"
   },
-  "homepage": "https://github.com/KnowAll-AI/mcp-neo4j-agent-memory#readme"
+  "homepage": "https://github.com/knowall-ai/mcp-reverie#readme"
 }

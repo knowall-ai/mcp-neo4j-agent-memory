@@ -80,7 +80,7 @@ MATCH ()-[r]->() RETURN type(r), count(r);
 
 If you encounter issues not covered here:
 
-1. Check the [GitHub Issues](https://github.com/KnowAll-AI/mcp-neo4j-agent-memory/issues)
+1. Check the [GitHub Issues](https://github.com/knowall-ai/mcp-reverie/issues)
 2. Review the [Neo4j documentation](https://neo4j.com/docs/)
 3. Ensure you're using compatible versions:
    - Neo4j: 4.4+ or 5.x
