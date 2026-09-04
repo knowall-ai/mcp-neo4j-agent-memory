@@ -28,26 +28,35 @@ const testSearchSemantic = () => {
     mcp.stdin.write(JSON.stringify(message) + '\n');
   };
 
-  // Every exit path comes through here so the test node is always deleted (bounded by a 3s backstop).
+  // Every exit path comes through here: delete the test node, confirm the deletion, then wait for the
+  // child to close. A 3s backstop bounds each stage so a hung server cannot leave the test running.
+  let deleteId = null;
+  let exitCode = 0;
   const finish = (code) => {
     if (finishing) return;
     finishing = true;
+    exitCode = code;
     clearTimeout(timeout);
-    const exit = () => {
-      mcp.kill();
-      process.exit(code);
-    };
     if (memoryId === null) {
-      exit();
+      terminate();
       return;
     }
-    const backstop = setTimeout(exit, 3000);
-    mcp.stdout.once('data', () => {
-      clearTimeout(backstop);
-      console.log('🧹 Cleaned up semantic search test memory');
-      exit();
-    });
+    deleteId = messageId;
     sendMessage('delete_memory', { nodeId: memoryId });
+    setTimeout(() => {
+      console.error('❌ Error: delete_memory did not respond; the test node may be left behind');
+      exitCode = 1;
+      terminate();
+    }, 3000).unref();
+  };
+
+  const terminate = () => {
+    const backstop = setTimeout(() => process.exit(exitCode || 1), 3000);
+    mcp.once('close', () => {
+      clearTimeout(backstop);
+      process.exit(exitCode);
+    });
+    mcp.kill();
   };
 
   const timeout = setTimeout(() => {
@@ -56,7 +65,6 @@ const testSearchSemantic = () => {
   }, 60000); // first run may download the local embedding model
 
   mcp.stdout.on('data', (data) => {
-    if (finishing) return;
     outputBuffer += data.toString();
     const lines = outputBuffer.split('\n');
     outputBuffer = lines[lines.length - 1];
@@ -67,6 +75,19 @@ const testSearchSemantic = () => {
 
       try {
         const response = JSON.parse(line);
+
+        if (finishing) {
+          if (response.id === deleteId) {
+            if (response.error || response.result?.isError) {
+              console.error('❌ Error: delete_memory failed:', JSON.stringify(response.error ?? response.result));
+              exitCode = 1;
+            } else {
+              console.log('🧹 Cleaned up semantic search test memory');
+            }
+            terminate();
+          }
+          continue;
+        }
 
         if (response.id === 1) {
           const content = response.result?.content?.[0]?.text;
@@ -96,6 +117,11 @@ const testSearchSemantic = () => {
 
           if (!hit) {
             throw new Error('Expected semantic search to return the Benjamin Weeks test node');
+          }
+          // In semantic mode the keyword tier is not used, so _match proves the embedding path ran
+          // rather than the keyword fallback that kicks in when embeddings are unavailable.
+          if (hit.memory._match !== 'semantic') {
+            throw new Error(`Expected a semantic match, got _match=${hit.memory._match}`);
           }
 
           console.log('✅ semantic search_memories test passed');
