@@ -1,0 +1,44 @@
+name: PR Lint
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-lint:
+    name: Title, body and issue link
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title, body and issue reference
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -u
+          if [ "$GITHUB_ACTOR" = 'dependabot[bot]' ] || [ "$GITHUB_ACTOR" = 'github-actions[bot]' ]; then
+            echo "Skipping PR lint for bot actor: $GITHUB_ACTOR"; exit 0
+          fi
+          fail=0
+          title_regex='^(feat|fix|perf|refactor|chore|ci|docs|deps|test|build|style): .+'
+          if ! echo "$PR_TITLE" | grep -Eq "$title_regex"; then
+            echo "::error::PR title must start with a conventional-commit prefix (feat:, fix:, chore:, docs:, ...). Got: '$PR_TITLE'"; fail=1
+          fi
+          body_len=$(echo -n "${PR_BODY:-}" | wc -c)
+          if [ "$body_len" -lt 40 ]; then
+            echo "::error::PR body is missing or too short (<40 chars)."; fail=1
+          fi
+          if echo "$PR_TITLE" | grep -Eq '^(feat|fix|perf|refactor): '; then
+            if ! echo "$PR_BODY" | grep -Eq '^[[:space:]]*[-*]?[[:space:]]*Fixes #[0-9]+'; then
+              echo "::error::PR body must contain a 'Fixes #nnn' line for feat/fix/perf/refactor PRs."; fail=1
+            fi
+          fi
+          if ! echo "$PR_BODY" | grep -Eq '^## Test plan'; then
+            echo "::error::PR body must include a '## Test plan' section."; fail=1
+          fi
+          [ "$fail" -ne 0 ] && exit 1
+          echo "PR lint passed."
