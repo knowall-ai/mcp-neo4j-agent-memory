@@ -34,6 +34,29 @@ export class Neo4jClient {
       };
     }
 
+    if (neo4j.isPath(value)) {
+      return {
+        start: this.convertNestedIntegers(value.start),
+        end: this.convertNestedIntegers(value.end),
+        segments: value.segments.map((segment) => ({
+          start: this.convertNestedIntegers(segment.start),
+          relationship: this.convertNestedIntegers(segment.relationship),
+          end: this.convertNestedIntegers(segment.end),
+        })),
+      };
+    }
+
+    if (neo4j.isPoint(value)) {
+      return { srid: this.convertNestedIntegers(value.srid), x: value.x, y: value.y, z: value.z };
+    }
+
+    if (
+      neo4j.isDate(value) || neo4j.isDateTime(value) || neo4j.isLocalDateTime(value) ||
+      neo4j.isTime(value) || neo4j.isLocalTime(value) || neo4j.isDuration(value)
+    ) {
+      return value.toString();
+    }
+
     if (Array.isArray(value)) {
       return value.map((item) => this.convertNestedIntegers(item));
     }
@@ -49,19 +72,51 @@ export class Neo4jClient {
     return value;
   }
 
+  private recordToObject<T>(record: Neo4jRecord): T {
+    const obj: { [key: string]: any } = {};
+    for (const key of record.keys) {
+      obj[key as string] = this.convertNestedIntegers(record.get(key));
+    }
+    return obj as T;
+  }
+
   async executeQuery<T = any>(query: string, params: Neo4jQueryParams = {}): Promise<T[]> {
     const session: Session = this.driver.session({
       database: this.database
     });
     try {
       const result: QueryResult = await session.run(query, params);
-      return result.records.map((record: Neo4jRecord) => {
-        const obj: { [key: string]: any } = {};
-        for (const key of record.keys) {
-          obj[key as string] = this.convertNestedIntegers(record.get(key));
+      return result.records.map((record: Neo4jRecord) => this.recordToObject<T>(record));
+    } finally {
+      await session.close();
+    }
+  }
+
+  /**
+   * Caller-supplied Cypher: runs in a READ transaction (the server rejects writes), stops
+   * consuming after `limit` records instead of materialising the whole result, and is
+   * bounded by a transaction timeout.
+   */
+  async executeReadQuery<T = any>(
+    query: string,
+    params: Neo4jQueryParams,
+    options: { limit: number; timeoutMs: number }
+  ): Promise<T[]> {
+    const session: Session = this.driver.session({
+      database: this.database,
+      defaultAccessMode: neo4j.session.READ
+    });
+    try {
+      return await session.executeRead(async (tx) => {
+        const rows: T[] = [];
+        for await (const record of tx.run(query, params)) {
+          rows.push(this.recordToObject<T>(record));
+          if (rows.length >= options.limit) {
+            break;
+          }
         }
-        return obj as T;
-      });
+        return rows;
+      }, { timeout: options.timeoutMs });
     } finally {
       await session.close();
     }

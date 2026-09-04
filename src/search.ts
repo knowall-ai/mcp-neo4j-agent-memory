@@ -1,4 +1,5 @@
-import { EMBEDDING_FIELDS, cosine } from './embeddings.js';
+import { cosine } from './embeddings.js';
+import { contentKeys } from './hygiene.js';
 
 export type SearchMode = 'hybrid' | 'keyword' | 'semantic';
 
@@ -20,10 +21,11 @@ export function keywordMatches(query: string, props: Record<string, any>): boole
   }
 
   const words = trimmedQuery.split(/\s+/);
-  const embeddingFieldSet = new Set<string>(EMBEDDING_FIELDS);
 
-  for (const [key, value] of Object.entries(props)) {
-    if (embeddingFieldSet.has(key) || value === null || value === undefined) {
+  // Only user content is searchable: timestamps, status and embedding fields never match.
+  for (const key of contentKeys(props)) {
+    const value = props[key];
+    if (value === null || value === undefined) {
       continue;
     }
 

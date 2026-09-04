@@ -2,14 +2,20 @@ import { EMBEDDING_FIELDS } from './embeddings.js';
 
 /** Above this many real properties a node is "bloated": facts are being piled on instead of modelled. */
 export const DEFAULT_MAX_PROPERTIES = 30;
+export const MAX_PROPERTIES_CAP = 500;
 
 const HOUSEKEEPING = new Set<string>([...EMBEDDING_FIELDS, 'created_at', 'updated_at', 'status', 'archived_at']);
 const DATE_SUFFIX_RE = /(_|-)\d{4}(_|-)\d{2}(_|-)\d{2}$/;
 const LONG_TEXT = 120;
 
+/** REVERIE_MAX_PROPERTIES must be a whole number in 1..MAX_PROPERTIES_CAP; anything else falls back to the default. */
 export function maxProperties(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = Number.parseInt(env.REVERIE_MAX_PROPERTIES ?? '', 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_PROPERTIES;
+  const raw = (env.REVERIE_MAX_PROPERTIES ?? '').trim();
+  if (!/^\d+$/.test(raw)) {
+    return DEFAULT_MAX_PROPERTIES;
+  }
+  const value = Number(raw);
+  return value >= 1 && value <= MAX_PROPERTIES_CAP ? value : DEFAULT_MAX_PROPERTIES;
 }
 
 /** User-visible properties only: no `_id`-style metadata, timestamps, status or embedding fields. */

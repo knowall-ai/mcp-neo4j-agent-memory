@@ -38,15 +38,48 @@ function getModel(env: NodeJS.ProcessEnv, provider: Provider): string {
   return env.REVERIE_EMBEDDING_MODEL?.trim() || DEFAULT_MODELS[provider];
 }
 
-async function fetchJson(url: string, init: RequestInit): Promise<any> {
-  const response = await fetch(url, init);
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_TIMEOUT_MS = 120_000;
+let requestTimeoutMs = DEFAULT_TIMEOUT_MS;
 
-  if (!response.ok) {
-    const body = (await response.text()).slice(0, 200);
-    throw new Error(`Embedding request failed ${response.status}: ${body}`);
+/** REVERIE_EMBED_TIMEOUT_MS, whole milliseconds, clamped to 1s..120s. */
+function configuredTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = (env.REVERIE_EMBED_TIMEOUT_MS ?? '').trim();
+  const value = /^\d+$/.test(raw) ? Number(raw) : DEFAULT_TIMEOUT_MS;
+  return Math.min(Math.max(value, 1_000), MAX_TIMEOUT_MS);
+}
+
+/** Credentials only travel over TLS; plain http is allowed for loopback hosts (local proxies). */
+export function secureEndpoint(raw: string, name: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${name} is not a valid URL`);
   }
+  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
+    throw new Error(`${name} must use https (http is only accepted for localhost)`);
+  }
+  return url.toString().replace(/\/$/, '');
+}
 
-  return response.json();
+async function fetchJson(url: string, init: RequestInit): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+
+    if (!response.ok) {
+      const body = (await response.text()).slice(0, 200);
+      throw new Error(`Embedding request failed ${response.status}: ${body}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function embedRemote(
@@ -83,6 +116,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
   }
 
   const model = getModel(env, provider);
+  requestTimeoutMs = configuredTimeoutMs(env);
 
   if (provider === 'local') {
     let extractorPromise: Promise<any> | null = null;
@@ -123,7 +157,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
       throw new Error('OPENAI_API_KEY is required for OpenAI embeddings');
     }
 
-    const baseUrl = env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1';
+    const baseUrl = secureEndpoint(env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1', 'OPENAI_BASE_URL');
     return {
       id: `${provider}/${model}`,
       async embed(texts: string[]): Promise<number[][]> {
@@ -145,14 +179,15 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
   }
 
   if (provider === 'azure') {
-    const endpoint = env.AZURE_OPENAI_ENDPOINT?.trim();
+    const rawEndpoint = env.AZURE_OPENAI_ENDPOINT?.trim();
     const apiKey = env.AZURE_OPENAI_API_KEY?.trim();
     const deployment = env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT?.trim();
     const apiVersion = env.AZURE_OPENAI_API_VERSION?.trim() || '2024-10-21';
 
-    if (!endpoint) {
+    if (!rawEndpoint) {
       throw new Error('AZURE_OPENAI_ENDPOINT is required for Azure embeddings');
     }
+    const endpoint = secureEndpoint(rawEndpoint, 'AZURE_OPENAI_ENDPOINT');
     if (!apiKey) {
       throw new Error('AZURE_OPENAI_API_KEY is required for Azure embeddings');
     }
@@ -165,7 +200,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
       async embed(texts: string[]): Promise<number[][]> {
         return embedRemote(texts, async (batch) => {
           const data = await fetchJson(
-            `${endpoint.replace(/\/$/, '')}/openai/deployments/${deployment}/embeddings?api-version=${apiVersion}`,
+            `${endpoint}/openai/deployments/${deployment}/embeddings?api-version=${apiVersion}`,
             {
               method: 'POST',
               headers: {
