@@ -44,6 +44,7 @@ const runNextTest = () => {
       console.log(`✅ ${testFile} completed successfully`);
     } else {
       console.log(`❌ ${testFile} failed with code ${code}`);
+      process.exitCode = 1;
     }
 
     currentTest += 1;

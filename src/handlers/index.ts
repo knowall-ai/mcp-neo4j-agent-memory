@@ -2,6 +2,7 @@ import { CallToolResult, ErrorCode, McpError } from '@modelcontextprotocol/sdk/t
 import neo4j from 'neo4j-driver';
 import { Embedder, embedNodes, scrub } from '../embeddings.js';
 import { Neo4jClient } from '../neo4j-client.js';
+import { readOnlyViolation } from '../cypher-guard.js';
 import { bloatHint, contentKeys, factLikeKeys, maxProperties } from '../hygiene.js';
 import { Candidate, Ranked, SearchMode, rank } from '../search.js';
 import {
@@ -35,7 +36,21 @@ interface GroupedDuplicateNode extends DuplicateNodeRow {
   effectiveLabel: string;
 }
 
-// Blocks write clauses, subqueries and every procedure except the read-only db.* / dbms.* ones (APOC can write).
+const QUERY_ROW_LIMIT = 200;
+const QUERY_TIMEOUT_MS = 10_000;
+/** Property keys that, when both present and different, mark two same-named nodes as distinct entities. */
+const IDENTITY_KEYS = ['email', 'phone', 'website', 'company', 'organisation', 'organization'] as const;
+/** apoc.refactor.mergeNodes property strategy: survivor wins for name, timestamps and vectors; the rest combine. */
+const MERGE_PROPERTY_STRATEGY: Record<string, string> = {
+  name: 'discard',
+  created_at: 'discard',
+  embedding: 'discard',
+  name_embedding: 'discard',
+  embedding_model: 'discard',
+  embedded_at: 'discard',
+  '.*': 'combine'
+};
+
 const EMBED_NODE_CYPHER = `
   MATCH (n)
   WHERE id(n) = $id
@@ -44,7 +59,6 @@ const EMBED_NODE_CYPHER = `
       n.embedding_model = $model,
       n.embedded_at = $embeddedAt`;
 
-const READ_ONLY_CYPHER_RE = /\b(CREATE|MERGE|SET|DELETE|REMOVE|DROP|DETACH|LOAD\s+CSV)\b|\bCALL\b(?!\s+(db|dbms)\.)/i;
 
 export async function handleToolCall(
   name: string,
@@ -63,7 +77,7 @@ export async function handleToolCall(
         const limit = Math.min(args.limit ?? 10, 200);
         const query = args.query ?? '';
         const requestedMode = args.search_mode ?? 'hybrid';
-        const similarityThreshold = clamp(args.similarity_threshold ?? 0.4, 0, 1);
+        const similarityThreshold = args.similarity_threshold ?? 0.4;
         let orderBy = 'memory.created_at DESC';
         let hasCustomOrder = false;
         if (args.order_by) {
@@ -236,12 +250,16 @@ export async function handleToolCall(
           throw new McpError(ErrorCode.InvalidParams, 'Invalid query_memories arguments');
         }
 
-        if (READ_ONLY_CYPHER_RE.test(args.cypher)) {
-          throw new McpError(ErrorCode.InvalidParams, 'query_memories only supports read-only Cypher');
+        const violation = readOnlyViolation(args.cypher);
+        if (violation) {
+          throw new McpError(ErrorCode.InvalidParams, `query_memories only supports read-only Cypher: ${violation}`);
         }
 
-        const result = await neo4jClient.executeQuery(args.cypher, args.params ?? {});
-        return jsonResult(result.slice(0, 200));
+        const result = await neo4jClient.executeReadQuery(args.cypher, args.params ?? {}, {
+          limit: QUERY_ROW_LIMIT,
+          timeoutMs: QUERY_TIMEOUT_MS
+        });
+        return jsonResult(result);
       }
 
       case 'memory_stats': {
@@ -342,7 +360,7 @@ export async function handleToolCall(
 
         const duplicateRows = await neo4jClient.executeQuery<DuplicateNodeRow>(
           `MATCH (n)
-           WHERE coalesce(n.status, '') <> 'archived' AND n.name IS NOT NULL
+           WHERE coalesce(n.status, '') <> 'archived' AND n.name IS :: STRING
            RETURN id(n) AS id,
                   labels(n)[0] AS label,
                   n.name AS name,
@@ -351,6 +369,8 @@ export async function handleToolCall(
            ORDER BY labels(n)[0], toLower(n.name), n.created_at, id(n)`
         );
         const duplicates = groupDuplicates(duplicateRows);
+        const identity = await loadIdentityFields(neo4jClient, duplicates.flat().map((node) => node.id));
+        const duplicateReport: DuplicateGroupReport[] = [];
 
         let apocAvailable = true;
         try {
@@ -360,33 +380,54 @@ export async function handleToolCall(
         }
 
         let merged = 0;
-        if (!apocAvailable) {
-          if (duplicates.length > 0) {
-            notes.push(`APOC unavailable; duplicate names found: ${duplicates.map((group) => `${group[0].effectiveLabel}/${group[0].name}`).join(', ')}`);
-          }
-        } else {
-          for (const group of duplicates) {
-            const [keep, ...rest] = group;
-            merged += rest.length;
+        if (!apocAvailable && duplicates.length > 0) {
+          notes.push('APOC unavailable; duplicates were listed but not merged');
+        }
 
-            if (dryRun) {
+        for (const group of duplicates) {
+          const [keep, ...rest] = group;
+          const report: DuplicateGroupReport = {
+            label: keep.effectiveLabel,
+            name: String(keep.name),
+            keep: keep.id,
+            merged: [],
+            skipped: []
+          };
+
+          for (const duplicate of rest) {
+            const conflict = identityConflict(identity.get(keep.id), identity.get(duplicate.id));
+            if (conflict) {
+              report.skipped.push({ id: duplicate.id, reason: `different ${conflict}` });
+              continue;
+            }
+            if (!apocAvailable) {
+              report.skipped.push({ id: duplicate.id, reason: 'APOC unavailable' });
               continue;
             }
 
-            for (const duplicate of rest) {
+            if (!dryRun) {
+              // Keep the survivor's identity and vector fields; combine everything else so no value is
+              // dropped (conflicts become lists). Clearing embedding_model makes the re-embed step below
+              // refresh the merged node.
               await neo4jClient.executeQuery(
                 `MATCH (keep) WHERE id(keep) = $keepId
                  MATCH (dup) WHERE id(dup) = $dupId
-                 CALL apoc.refactor.mergeNodes([keep, dup], {properties: 'discard', mergeRels: true})
+                 CALL apoc.refactor.mergeNodes([keep, dup], {properties: $strategy, mergeRels: true})
                  YIELD node
+                 SET node.embedding_model = null
                  RETURN count(node) AS count`,
                 {
                   keepId: neo4j.int(keep.id),
-                  dupId: neo4j.int(duplicate.id)
+                  dupId: neo4j.int(duplicate.id),
+                  strategy: MERGE_PROPERTY_STRATEGY
                 }
               );
             }
+            report.merged.push(duplicate.id);
+            merged += 1;
           }
+
+          duplicateReport.push(report);
         }
 
         let reembedded = 0;
@@ -402,17 +443,19 @@ export async function handleToolCall(
           if (dryRun) {
             reembedded = nodesToEmbed.length;
           } else if (nodesToEmbed.length > 0) {
-            try {
-              for (let index = 0; index < nodesToEmbed.length; index += 50) {
-                const batch = nodesToEmbed.slice(index, index + 50).map((candidate) => ({
-                  id: candidate.id,
-                  label: candidate.label || 'Memory',
-                  props: candidate.props || {}
-                }));
+            for (let index = 0; index < nodesToEmbed.length; index += 50) {
+              const batch = nodesToEmbed.slice(index, index + 50).map((candidate) => ({
+                id: candidate.id,
+                label: candidate.label || 'Memory',
+                props: candidate.props || {}
+              }));
+              try {
                 reembedded += await persistCandidateEmbeddings(neo4jClient, embedder, batch);
+              } catch (error) {
+                console.error('Embedding unavailable for dream:', error);
+                notes.push(`re-embedding stopped after ${reembedded} of ${nodesToEmbed.length} nodes: ${error instanceof Error ? error.message : String(error)}`);
+                break;
               }
-            } catch (error) {
-              console.error('Embedding unavailable for dream:', error);
             }
           }
         }
@@ -423,8 +466,11 @@ export async function handleToolCall(
              AND NOT (n)--()
            RETURN count(n) AS count`
         );
+        const mergedGroups = duplicateReport
+          .filter((report) => report.merged.length > 0)
+          .map((report) => duplicates.find((group) => group[0].id === report.keep) ?? []);
         const orphans = dryRun
-          ? simulateOrphansAfterMerge(currentOrphanRow?.count ?? 0, duplicates)
+          ? simulateOrphansAfterMerge(currentOrphanRow?.count ?? 0, mergedGroups)
           : currentOrphanRow?.count ?? 0;
 
         const bloated = await findBloatedNodes(neo4jClient, maxProperties());
@@ -438,6 +484,7 @@ export async function handleToolCall(
           merged,
           reembedded,
           orphans,
+          duplicates: duplicateReport,
           bloated,
           apoc_available: apocAvailable,
           notes
@@ -616,6 +663,51 @@ async function fetchMemories(
   return neo4jClient.executeQuery(finalQuery, { memoryIds });
 }
 
+interface DuplicateGroupReport {
+  label: string;
+  name: string;
+  keep: number;
+  merged: number[];
+  skipped: Array<{ id: number; reason: string }>;
+}
+
+type IdentityFields = Partial<Record<(typeof IDENTITY_KEYS)[number], string>>;
+
+/** Identity-bearing properties for the nodes in duplicate groups, lower-cased for comparison. */
+async function loadIdentityFields(neo4jClient: Neo4jClient, ids: number[]): Promise<Map<number, IdentityFields>> {
+  const fields = new Map<number, IdentityFields>();
+  if (ids.length === 0) {
+    return fields;
+  }
+  const rows = await neo4jClient.executeQuery<{ id: number; props: Record<string, unknown> }>(
+    'MATCH (n) WHERE id(n) IN $ids RETURN id(n) AS id, properties(n) AS props',
+    { ids: ids.map((id) => neo4j.int(id)) }
+  );
+  for (const row of rows) {
+    const entry: IdentityFields = {};
+    for (const key of IDENTITY_KEYS) {
+      const value = row.props[key];
+      if (typeof value === 'string' && value.trim() !== '') {
+        entry[key] = value.trim().toLowerCase();
+      }
+    }
+    fields.set(row.id, entry);
+  }
+  return fields;
+}
+
+/** The first identity key both nodes carry with different values, or null when nothing distinguishes them. */
+function identityConflict(left: IdentityFields | undefined, right: IdentityFields | undefined): string | null {
+  for (const key of IDENTITY_KEYS) {
+    const a = left?.[key];
+    const b = right?.[key];
+    if (a !== undefined && b !== undefined && a !== b) {
+      return key;
+    }
+  }
+  return null;
+}
+
 interface BloatedNode {
   id: number;
   label: string;
@@ -662,10 +754,6 @@ function needsEmbedding(props: Record<string, any>, modelId: string): boolean {
   return props.embedding_model !== modelId || !Array.isArray(props.name_embedding);
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
 function getLazyEmbedBatchSize(): number {
   const raw = Number.parseInt(process.env.REVERIE_LAZY_EMBED_BATCH ?? '100', 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 100;
@@ -696,7 +784,7 @@ function groupDuplicates(rows: DuplicateNodeRow[]): GroupedDuplicateNode[][] {
       ...row,
       effectiveLabel
     };
-    const key = `${effectiveLabel}\u0000${row.name.toLowerCase()}`;
+    const key = `${effectiveLabel}\u0000${String(row.name).toLowerCase()}`;
     const group = byGroup.get(key) ?? [];
     group.push(node);
     byGroup.set(key, group);
@@ -706,15 +794,15 @@ function groupDuplicates(rows: DuplicateNodeRow[]): GroupedDuplicateNode[][] {
     .filter((group) => group.length > 1)
     .map((group) => [...group].sort(compareDuplicateNodes))
     .sort((left, right) => {
-      const leftKey = `${left[0].effectiveLabel}/${left[0].name.toLowerCase()}`;
-      const rightKey = `${right[0].effectiveLabel}/${right[0].name.toLowerCase()}`;
+      const leftKey = `${left[0].effectiveLabel}/${String(left[0].name).toLowerCase()}`;
+      const rightKey = `${right[0].effectiveLabel}/${String(right[0].name).toLowerCase()}`;
       return leftKey.localeCompare(rightKey);
     });
 }
 
 function compareDuplicateNodes(left: GroupedDuplicateNode, right: GroupedDuplicateNode): number {
-  const leftCreatedAt = left.created_at ?? '';
-  const rightCreatedAt = right.created_at ?? '';
+  const leftCreatedAt = String(left.created_at ?? '');
+  const rightCreatedAt = String(right.created_at ?? '');
   if (leftCreatedAt !== rightCreatedAt) {
     return leftCreatedAt.localeCompare(rightCreatedAt);
   }

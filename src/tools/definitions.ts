@@ -24,7 +24,7 @@ export const tools: Tool[] = [
         },
         depth: {
           type: 'number',
-          description: 'Relationship depth to include, defaults to 1',
+          description: 'Relationship depth to include, 0 to 5, defaults to 1',
         },
         order_by: {
           type: 'string',
@@ -32,7 +32,7 @@ export const tools: Tool[] = [
         },
         limit: {
           type: 'number',
-          description: 'Maximum results to return, defaults to 10, max 200',
+          description: 'Maximum results to return, 1 to 200, defaults to 10',
         },
         since_date: {
           type: 'string',
@@ -45,10 +45,11 @@ export const tools: Tool[] = [
         },
         similarity_threshold: {
           type: 'number',
-          description: 'Semantic similarity threshold from 0 to 1, defaults to 0.4.',
+          description: 'Semantic similarity threshold, 0 to 1 inclusive, defaults to 0.4.',
         },
       },
       required: [],
+      additionalProperties: false,
     },
   },
   {
@@ -205,6 +206,7 @@ export const tools: Tool[] = [
         },
       },
       required: ['cypher'],
+      additionalProperties: false,
     },
   },
   {
@@ -214,6 +216,7 @@ export const tools: Tool[] = [
       type: 'object',
       properties: {},
       required: [],
+      additionalProperties: false,
     },
   },
   {
@@ -228,6 +231,7 @@ export const tools: Tool[] = [
         },
       },
       required: [],
+      additionalProperties: false,
     },
   },
   guidanceTool,

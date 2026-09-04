@@ -155,8 +155,8 @@ Use UPPERCASE for relationship types:
 
 **Searching**
 - Empty query string returns all memories
-- Use search_mode: "hybrid" for the best default blend of keyword and semantic matching
-- Use search_mode: "keyword" for exact substring-style recall, or search_mode: "semantic" for meaning-first recall
+- Use search_mode: "hybrid" (the default) to return keyword matches first, then semantic matches above the threshold
+- Use search_mode: "keyword" to match any word of the query as a substring of any property, or search_mode: "semantic" for meaning-first recall
 - Lower similarity_threshold (for example 0.35) to widen semantic matches, or raise it (for example 0.7) to be stricter
 - Results include _score and _match so you can explain why something was returned
 - Use label parameter to filter by type

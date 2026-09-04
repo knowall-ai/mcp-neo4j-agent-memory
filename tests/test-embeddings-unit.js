@@ -4,6 +4,9 @@ import assert from 'assert';
 import { cosine, createEmbedder, embeddingText, nameText, scrub } from '../build/embeddings.js';
 import { keywordMatches, rank } from '../build/search.js';
 import { contentKeys, factLikeKeys, maxProperties } from '../build/hygiene.js';
+import { readOnlyViolation } from '../build/cypher-guard.js';
+import { isDreamArgs, isMemoryStatsArgs, isQueryMemoriesArgs, isSearchMemoriesArgs } from '../build/types.js';
+import { secureEndpoint } from '../build/embeddings.js';
 
 function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} ≈ ${expected}`);
@@ -106,6 +109,41 @@ try {
   assert.deepStrictEqual(factLikeKeys(bloated), ['live_call_camera_failure_2026_07_31', 'preference']);
   assert.strictEqual(maxProperties({}), 30);
   assert.strictEqual(maxProperties({ REVERIE_MAX_PROPERTIES: '12' }), 12);
+  assert.strictEqual(maxProperties({ REVERIE_MAX_PROPERTIES: '12.5' }), 30);
+  assert.strictEqual(maxProperties({ REVERIE_MAX_PROPERTIES: '12abc' }), 30);
+  assert.strictEqual(maxProperties({ REVERIE_MAX_PROPERTIES: '9999' }), 30);
+
+  // keyword matching ignores housekeeping fields such as created_at
+  assert.strictEqual(keywordMatches('2026', { name: 'Ben', created_at: '2026-01-01T00:00:00Z' }), false);
+
+  // read-only Cypher guard
+  assert.strictEqual(readOnlyViolation('MATCH (n:Person) RETURN n.name'), null);
+  assert.strictEqual(readOnlyViolation("MATCH (n) WHERE n.name = 'Sunset' RETURN n"), null);
+  assert.strictEqual(readOnlyViolation('CALL db.labels() YIELD label RETURN label'), null);
+  assert.ok(readOnlyViolation('MATCH (n) DETACH DELETE n'));
+  assert.ok(readOnlyViolation("CALL db.create.setNodeVectorProperty(n, 'embedding', [1.0])"));
+  assert.ok(readOnlyViolation("CALL apoc.create.node(['X'], {}) YIELD node RETURN node"));
+  assert.ok(readOnlyViolation('CALL { MATCH (n) RETURN n } RETURN 1'));
+
+  // argument validation rejects unknown keys and out-of-range numbers
+  assert.strictEqual(isSearchMemoriesArgs({ query: 'x', limit: 5, depth: 2, similarity_threshold: 0.5 }), true);
+  assert.strictEqual(isSearchMemoriesArgs({ query: 'x', search_mod: 'semantic' }), false);
+  assert.strictEqual(isSearchMemoriesArgs({ limit: -1 }), false);
+  assert.strictEqual(isSearchMemoriesArgs({ limit: 201 }), false);
+  assert.strictEqual(isSearchMemoriesArgs({ depth: 1.5 }), false);
+  assert.strictEqual(isSearchMemoriesArgs({ similarity_threshold: 1.2 }), false);
+  assert.strictEqual(isMemoryStatsArgs({}), true);
+  assert.strictEqual(isMemoryStatsArgs([]), false);
+  assert.strictEqual(isMemoryStatsArgs({ verbose: true }), false);
+  assert.strictEqual(isDreamArgs({ dry_run: true }), true);
+  assert.strictEqual(isDreamArgs({ dryRun: true }), false);
+  assert.strictEqual(isQueryMemoriesArgs({ cypher: 'RETURN 1', params: { a: 1 } }), true);
+  assert.strictEqual(isQueryMemoriesArgs({ cypher: 'RETURN 1', params: [1] }), false);
+
+  // provider endpoints must be https unless loopback
+  assert.strictEqual(secureEndpoint('https://api.openai.com/v1/', 'X'), 'https://api.openai.com/v1');
+  assert.strictEqual(secureEndpoint('http://localhost:8080/v1', 'X'), 'http://localhost:8080/v1');
+  assert.throws(() => secureEndpoint('http://proxy.example.com/v1', 'X'));
 
   console.log('PASS test-embeddings-unit: embeddings helpers and hybrid ranking behave as expected');
 } catch (error) {

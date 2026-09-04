@@ -128,13 +128,15 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 
 - `query_memories`: Run a read-only Cypher query
   - Accepts a Cypher string plus optional params
-  - Rejects write operations and caps output at 200 rows
+  - Runs in a Neo4j READ transaction (the server rejects writes), stops after 200 rows, and times out after 10 seconds
+  - Rejects write clauses, `CALL` subqueries, and any procedure outside a small read-only allow-list (`db.labels`, `db.propertyKeys`, `db.index.*.query*`, schema procedures). For belt and braces, run the server with a read-only Neo4j role where you can
 
 - `memory_stats`: Summarize the current graph
   - Returns node, relationship, label, relationship-type, embedding, and orphan counts
 
 - `dream`: Deterministically clean up and consolidate the graph
-  - Relabels lowercase labels to their Capitalised form (`person` → `Person`), merges duplicate names within a label when APOC is available, and refreshes embeddings
+  - Relabels lowercase labels to their Capitalised form (`person` → `Person`), merges same-named nodes within a label when APOC is available, and refreshes embeddings
+  - Merging keeps the survivor's `name`, timestamps and vectors and combines every other property (conflicting values become lists, nothing is dropped) and skips pairs whose identity fields differ (`email`, `phone`, `website`, `company`, `organisation`, `organization`), so two different "John Smith"s stay separate. The report lists every group under `duplicates` with what was merged and what was skipped and why. Run with `dry_run: true` first to review
   - Reports `bloated` nodes (more than `REVERIE_MAX_PROPERTIES`, default 30, real properties) with the keys that look like dated facts or prose, so a nightly sleep can fold them into attributes, relationships or notes
   - Supports `dry_run` for a no-write report
 
@@ -210,7 +212,7 @@ Set `REVERIE_EMBEDDINGS` to choose the embedding provider used by hybrid and sem
 | `voyage` | `voyage-3-lite` | `VOYAGE_API_KEY` |
 | `none` | disabled | none |
 
-Use `REVERIE_EMBEDDING_MODEL` to override the model name for any provider. Remote providers batch up to 64 texts per request.
+Use `REVERIE_EMBEDDING_MODEL` to override the model name for any provider. Remote providers batch up to 64 texts per request, time out after `REVERIE_EMBED_TIMEOUT_MS` (default 30000, max 120000), and must be reached over https; plain http is only accepted for localhost.
 
 The `local` provider downloads its model (about 23 MB) from Hugging Face on first use and caches it. If that download fails, or any provider errors, search degrades to keyword matching for that call and the error is logged to stderr. Set `REVERIE_EMBEDDINGS=none` to turn embeddings off entirely.
 
