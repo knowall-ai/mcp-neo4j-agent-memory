@@ -23,7 +23,9 @@ export const tools: Tool[] = [
           description: 'Filter by memory label',
         },
         depth: {
-          type: 'number',
+          type: 'integer',
+          minimum: 0,
+          maximum: 5,
           description: 'Relationship depth to include, 0 to 5, defaults to 1',
         },
         order_by: {
@@ -31,7 +33,9 @@ export const tools: Tool[] = [
           description: 'Sort order such as created_at DESC, name ASC',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
+          minimum: 1,
+          maximum: 200,
           description: 'Maximum results to return, 1 to 200, defaults to 10',
         },
         since_date: {
@@ -45,6 +49,8 @@ export const tools: Tool[] = [
         },
         similarity_threshold: {
           type: 'number',
+          minimum: 0,
+          maximum: 1,
           description: 'Semantic similarity threshold, 0 to 1 inclusive, defaults to 0.4.',
         },
       },

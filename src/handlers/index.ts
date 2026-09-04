@@ -466,9 +466,14 @@ export async function handleToolCall(
              AND NOT (n)--()
            RETURN count(n) AS count`
         );
+        // Simulate only what would actually merge: the survivor plus the merged ids, never the skipped ones.
         const mergedGroups = duplicateReport
           .filter((report) => report.merged.length > 0)
-          .map((report) => duplicates.find((group) => group[0].id === report.keep) ?? []);
+          .map((report) => {
+            const group = duplicates.find((candidate) => candidate[0].id === report.keep) ?? [];
+            const retained = new Set([report.keep, ...report.merged]);
+            return group.filter((node) => retained.has(node.id));
+          });
         const orphans = dryRun
           ? simulateOrphansAfterMerge(currentOrphanRow?.count ?? 0, mergedGroups)
           : currentOrphanRow?.count ?? 0;
