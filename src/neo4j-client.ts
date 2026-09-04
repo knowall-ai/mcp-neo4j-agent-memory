@@ -1,4 +1,4 @@
-import neo4j, { Driver, Session, QueryResult, Record as Neo4jRecord, Node, Relationship, Integer } from 'neo4j-driver';
+import neo4j, { Driver, Integer, Node, QueryResult, Record as Neo4jRecord, Relationship, Session } from 'neo4j-driver';
 
 export interface Neo4jQueryParams {
   [key: string]: any;
@@ -17,11 +17,27 @@ export class Neo4jClient {
     if (value instanceof Integer) {
       return value.toNumber();
     }
-    
-    if (Array.isArray(value)) {
-      return value.map(item => this.convertNestedIntegers(item));
+
+    if (value instanceof Node) {
+      return {
+        ...this.convertNestedIntegers(value.properties),
+        _id: value.identity.toNumber(),
+        _labels: value.labels,
+      };
     }
-    
+
+    if (value instanceof Relationship) {
+      return {
+        ...this.convertNestedIntegers(value.properties),
+        _id: value.identity.toNumber(),
+        _type: value.type,
+      };
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => this.convertNestedIntegers(item));
+    }
+
     if (value && typeof value === 'object' && value.constructor === Object) {
       const converted: { [key: string]: any } = {};
       for (const [key, val] of Object.entries(value)) {
@@ -29,7 +45,7 @@ export class Neo4jClient {
       }
       return converted;
     }
-    
+
     return value;
   }
 
@@ -42,17 +58,7 @@ export class Neo4jClient {
       return result.records.map((record: Neo4jRecord) => {
         const obj: { [key: string]: any } = {};
         for (const key of record.keys) {
-          const value = record.get(key);
-          if (value instanceof Node || value instanceof Relationship) {
-            obj[key as string] = {
-              ...this.convertNestedIntegers(value.properties),
-              _id: value.identity.toNumber(),
-              _labels: value instanceof Node ? value.labels : undefined,
-              _type: value instanceof Relationship ? value.type : undefined,
-            };
-          } else {
-            obj[key as string] = this.convertNestedIntegers(value);
-          }
+          obj[key as string] = this.convertNestedIntegers(record.get(key));
         }
         return obj as T;
       });

@@ -1,20 +1,22 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { Neo4jClient } from './neo4j-client.js';
-import { Neo4jServerConfig } from './types.js';
-import { tools } from './tools/definitions.js';
+import { Embedder, createEmbedder } from './embeddings.js';
 import { handleToolCall } from './handlers/index.js';
+import { Neo4jClient } from './neo4j-client.js';
+import { tools } from './tools/definitions.js';
+import { Neo4jServerConfig } from './types.js';
 
 export class Neo4jServer {
   private server: Server;
   private neo4j: Neo4jClient | null;
+  private embedder: Embedder | null;
 
   constructor(config?: Neo4jServerConfig) {
     this.server = new Server(
       {
         name: 'reverie',
-        version: '1.0.0',
+        version: '0.4.0',
       },
       {
         capabilities: {
@@ -24,9 +26,9 @@ export class Neo4jServer {
     );
 
     this.neo4j = config ? new Neo4jClient(config.uri, config.username, config.password, config.database) : null;
+    this.embedder = config ? createEmbedder() : null;
     this.setupToolHandlers();
 
-    // Error handling
     this.server.onerror = (error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
       await this.close();
@@ -35,12 +37,10 @@ export class Neo4jServer {
   }
 
   private setupToolHandlers(): void {
-    // Tool list handler
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools,
     }));
 
-    // Tool execution handler
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!this.neo4j) {
         return {
@@ -54,7 +54,7 @@ export class Neo4jServer {
         };
       }
       const { name, arguments: args } = request.params;
-      return handleToolCall(name, args, this.neo4j);
+      return handleToolCall(name, args, this.neo4j, this.embedder);
     });
   }
 

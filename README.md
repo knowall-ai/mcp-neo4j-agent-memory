@@ -72,6 +72,15 @@ The `search_memories` tool uses word tokenization:
 
 This approach makes the system more powerful and adaptable, as improvements in LLM capabilities directly translate to better memory management.
 
+## Search
+
+`search_memories` now supports three modes:
+- `hybrid` (default): keyword hits score `1`, then semantic matches add close variants such as `Benjamin Weeks` for `Ben Weeks`
+- `keyword`: preserves today's substring-style word matching across all properties
+- `semantic`: uses embeddings only when available, with graceful fallback to keyword behavior if embeddings are unavailable
+
+Use `similarity_threshold` (default `0.4`, clamped to `0..1`) to control how strict semantic matches are. Results include `_score` and `_match` on each returned `memory` object so callers can explain why a memory was returned.
+
 ### Neo4j Enterprise Support
 
 This server now supports connecting to specific databases in Neo4j Enterprise Edition. By default, it connects to the "neo4j" database, but you can specify a different database using the `NEO4J_DATABASE` environment variable.
@@ -79,12 +88,11 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 ### Memory Tools
 
 - `search_memories`: Search and retrieve memories from the knowledge graph
-  - **Word-based search**: Searches for ANY word in your query (e.g., "Ben Weeks" finds memories containing "Ben" OR "Weeks")
-  - Natural language search across all memory properties (or leave empty to get all)
-  - Filter by memory type (person, place, project, etc.)
-  - Filter by date with `since_date` parameter (ISO format)
-  - Control relationship depth and result limits
-  - Sort by any field (created_at, name, etc.)
+  - **Hybrid search**: Blend keyword and semantic search; `Ben Weeks` can also find `Benjamin Weeks`
+  - Choose `search_mode` = `hybrid`, `keyword`, or `semantic`
+  - Tune semantic strictness with `similarity_threshold` (default `0.4`)
+  - Returned memories include `_score` and `_match` metadata
+  - Filter by memory type (case-insensitive, so `person` and `Person` both work), date, depth, result limit, and sort order
 
 - `create_memory`: Create a new memory in the knowledge graph
   - Flexible type system - use any label in lowercase (person, place, project, skill, etc.)
@@ -116,6 +124,17 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
   - Shows all labels with counts
   - Helps maintain consistency
   - Prevents duplicate label variations
+
+- `query_memories`: Run a read-only Cypher query
+  - Accepts a Cypher string plus optional params
+  - Rejects write operations and caps output at 200 rows
+
+- `memory_stats`: Summarize the current graph
+  - Returns node, relationship, label, relationship-type, embedding, and orphan counts
+
+- `dream`: Deterministically clean up and consolidate the graph
+  - Relabels lowercase labels to their Capitalised form (`person` → `Person`), merges duplicate names within a label when APOC is available, and refreshes embeddings
+  - Supports `dry_run` for a no-write report
 
 - `get_guidance`: Get help on using the memory tools effectively
   - Topics: labels, relationships, best-practices, examples
@@ -175,6 +194,25 @@ The server requires the following environment variables:
 - `NEO4J_USERNAME`: Neo4j username (required)
 - `NEO4J_PASSWORD`: Neo4j password (required)
 - `NEO4J_DATABASE`: Neo4j database name (optional) - For Neo4j Enterprise with multiple databases
+
+## Embeddings
+
+Set `REVERIE_EMBEDDINGS` to choose the embedding provider used by hybrid and semantic search. Changing `REVERIE_EMBEDDINGS` or `REVERIE_EMBEDDING_MODEL` causes nodes to be re-embedded lazily on the next search, or eagerly when you run `dream`.
+
+| `REVERIE_EMBEDDINGS` | Default model | Required env vars |
+| --- | --- | --- |
+| `local` (default) | `Xenova/all-MiniLM-L6-v2` | none; optional `REVERIE_MODEL_CACHE` |
+| `openai` | `text-embedding-3-small` | `OPENAI_API_KEY`; optional `OPENAI_BASE_URL` |
+| `azure` | deployment-backed | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`; optional `AZURE_OPENAI_API_VERSION` |
+| `ollama` | `nomic-embed-text` | optional `OLLAMA_HOST` |
+| `voyage` | `voyage-3-lite` | `VOYAGE_API_KEY` |
+| `none` | disabled | none |
+
+Use `REVERIE_EMBEDDING_MODEL` to override the model name for any provider. Remote providers batch up to 64 texts per request.
+
+The `local` provider downloads its model (about 23 MB) from Hugging Face on first use and caches it. If that download fails, or any provider errors, search degrades to keyword matching for that call and the error is logged to stderr. Set `REVERIE_EMBEDDINGS=none` to turn embeddings off entirely.
+
+Each node stores two vectors: `embedding` (label, name and every text property) and `name_embedding` (label, name and aliases only), plus `embedding_model` and `embedded_at`. A semantic score is the better of the two, so a short query like `Ben Weeks` still matches a richly described `Benjamin Weeks`. None of these fields are ever returned by the tools.
 
 ### Setting up Environment Variables
 

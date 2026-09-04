@@ -1,8 +1,5 @@
 #!/usr/bin/env node
 
-// Master test script that runs all function tests in sequence
-// This ensures tests run in the correct order (create data first, then test updates)
-
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -11,9 +8,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const tests = [
+  'test-embeddings-unit.js',
   'test-server-startup.js',
   'test-create-memory.js',
   'test-search-memories.js',
+  'test-search-semantic.js',
   'test-search-arrays.js',
   'test-create-connection.js',
   'test-update-memory.js',
@@ -34,10 +33,10 @@ const runNextTest = () => {
 
   const testFile = tests[currentTest];
   console.log(`\n🚀 Running ${testFile}...`);
-  
+
   const testProcess = spawn('node', [join(__dirname, testFile)], {
     stdio: 'inherit',
-    cwd: __dirname // Run tests from the tests directory
+    cwd: __dirname
   });
 
   testProcess.on('close', (code) => {
@@ -46,9 +45,8 @@ const runNextTest = () => {
     } else {
       console.log(`❌ ${testFile} failed with code ${code}`);
     }
-    
-    currentTest++;
-    // Add small delay between tests
+
+    currentTest += 1;
     setTimeout(runNextTest, 1000);
   });
 };

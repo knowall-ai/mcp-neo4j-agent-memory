@@ -3,20 +3,20 @@ import { guidanceTool } from './guidance-tool.js';
 
 /**
  * MCP Neo4j Agent Memory Tools
- * 
+ *
  * Tool descriptions are kept simple to avoid breaking prompt templates in 3rd party solutions.
  * Use the get_guidance tool to access detailed information about labels, relationships, and best practices.
  */
 export const tools: Tool[] = [
   {
     name: 'search_memories',
-    description: 'Search and retrieve memories from the knowledge graph',
+    description: 'Hybrid keyword + semantic search across the knowledge graph. "Ben Weeks" can also find "Benjamin Weeks" and each result includes _score and _match.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Search text to find in any property (searches for ANY word - e.g. "Ben Weeks" finds memories containing "Ben" OR "Weeks")',
+          description: 'Search text to find in any property. Keyword mode matches any word, while semantic mode can surface close meanings and name variants.',
         },
         label: {
           type: 'string',
@@ -37,6 +37,15 @@ export const tools: Tool[] = [
         since_date: {
           type: 'string',
           description: 'ISO date string to filter memories created after this date (e.g., "2024-01-01" or "2024-01-01T00:00:00Z")',
+        },
+        search_mode: {
+          type: 'string',
+          enum: ['hybrid', 'keyword', 'semantic'],
+          description: 'Search mode: hybrid (default), keyword-only, or semantic-only.',
+        },
+        similarity_threshold: {
+          type: 'number',
+          description: 'Semantic similarity threshold from 0 to 1, defaults to 0.4.',
         },
       },
       required: [],
@@ -176,6 +185,48 @@ export const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'query_memories',
+    description: 'Run a read-only Cypher query and return up to 200 scrubbed rows.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cypher: {
+          type: 'string',
+          description: 'Read-only Cypher to execute.',
+        },
+        params: {
+          type: 'object',
+          description: 'Optional parameter map for the Cypher query.',
+          additionalProperties: true,
+        },
+      },
+      required: ['cypher'],
+    },
+  },
+  {
+    name: 'memory_stats',
+    description: 'Summarize node, relationship, label, embedding, and orphan counts for the graph.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'dream',
+    description: 'Deterministically relabel, merge duplicates, and refresh embeddings, with an optional dry run report.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dry_run: {
+          type: 'boolean',
+          description: 'If true, report planned changes without writing them.',
+        },
+      },
       required: [],
     },
   },
