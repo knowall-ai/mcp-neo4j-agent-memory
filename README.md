@@ -1,8 +1,10 @@
 [![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
 
-# Neo4j Agent Memory MCP Server
+# Reverie — graph memory that dreams
 
-![Neo4j Agent Memory Banner](./images/neo4j-agent-memory-05.png)
+**Reverie** is KnowAll AI's Neo4j knowledge-graph memory for AI agents, served over MCP. Formerly published as `@knowall-ai/mcp-neo4j-agent-memory`; the repository URL is unchanged and the old package name keeps working as an alias.
+
+![Reverie Banner](./images/neo4j-agent-memory-05.png)
 
 A specialized MCP server that bridges Neo4j graph database with AI agents, providing memory-focused tools for storing, recalling, and connecting information in a knowledge graph.
 
@@ -11,7 +13,7 @@ A specialized MCP server that bridges Neo4j graph database with AI agents, provi
 You can run this MCP server directly using npx:
 
 ```bash
-npx @knowall-ai/mcp-neo4j-agent-memory
+npx @knowall-ai/reverie
 ```
 
 Or add it to your Claude Desktop configuration:
@@ -21,7 +23,7 @@ Or add it to your Claude Desktop configuration:
   "mcpServers": {
     "neo4j-memory": {
       "command": "npx",
-      "args": ["@knowall-ai/mcp-neo4j-agent-memory"],
+      "args": ["@knowall-ai/reverie"],
       "env": {
         "NEO4J_URI": "bolt://localhost:7687",
         "NEO4J_USERNAME": "neo4j",
@@ -133,7 +135,7 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 
 [![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
 
-To install Neo4j Agent Memory MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory):
+To install Reverie for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory):
 
 ```bash
 npx -y @smithery/cli install @knowall-ai/mcp-neo4j-agent-memory --client claude
