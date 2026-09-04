@@ -13,7 +13,7 @@ Title format: conventional-commit prefix + short description.
 
 Fixes #
 
-<!-- One `Fixes #nnn` per issue resolved. Required for feat/fix/perf/refactor; optional for every other prefix (chore, ci, docs, deps, test, build, style) — delete the section if unused. -->
+<!-- At least one `Fixes #nnn` line is required for feat/fix/perf/refactor (the lint checks for one; list every issue you resolve). Optional for every other prefix (chore, ci, docs, deps, test, build, style) — delete the section if unused. -->
 
 ## Test plan
 
