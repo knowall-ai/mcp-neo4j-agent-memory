@@ -12,12 +12,13 @@ export interface CreateMemoryArgs {
 
 export interface SearchMemoriesArgs {
   query?: string;
+  include_archived?: boolean;
   label?: string;
   depth?: number;
   order_by?: string;
   limit?: number;
   since_date?: string;
-  search_mode?: 'hybrid' | 'keyword' | 'semantic';
+  search_mode?: 'hybrid' | 'keyword' | 'semantic' | 'exact';
   similarity_threshold?: number;
 }
 
@@ -51,7 +52,7 @@ export interface DeleteConnectionArgs {
 }
 
 export interface ListMemoryLabelsArgs {
-  // No arguments needed for this tool
+  include_archived?: boolean;
 }
 
 export interface QueryMemoriesArgs {
@@ -106,7 +107,7 @@ export function isCreateMemoryArgs(args: unknown): args is CreateMemoryArgs {
     isPlainObject(args.properties);
 }
 
-const SEARCH_KEYS = ['query', 'label', 'depth', 'order_by', 'limit', 'since_date', 'search_mode', 'similarity_threshold'] as const;
+const SEARCH_KEYS = ['query', 'label', 'depth', 'order_by', 'limit', 'since_date', 'search_mode', 'similarity_threshold', 'include_archived'] as const;
 
 export function isSearchMemoriesArgs(args: unknown): args is SearchMemoriesArgs {
   if (!isPlainObject(args) || !hasOnlyKeys(args, SEARCH_KEYS)) return false;
@@ -117,7 +118,8 @@ export function isSearchMemoriesArgs(args: unknown): args is SearchMemoriesArgs 
   if (searchArgs.order_by !== undefined && typeof searchArgs.order_by !== 'string') return false;
   if (searchArgs.limit !== undefined && !isIntegerInRange(searchArgs.limit, 1, SEARCH_MAX_LIMIT)) return false;
   if (searchArgs.since_date !== undefined && typeof searchArgs.since_date !== 'string') return false;
-  if (searchArgs.search_mode !== undefined && !['hybrid', 'keyword', 'semantic'].includes(searchArgs.search_mode)) return false;
+  if (searchArgs.search_mode !== undefined && !['hybrid', 'keyword', 'semantic', 'exact'].includes(searchArgs.search_mode)) return false;
+  if (searchArgs.include_archived !== undefined && typeof searchArgs.include_archived !== 'boolean') return false;
   if (searchArgs.similarity_threshold !== undefined) {
     const threshold = searchArgs.similarity_threshold;
     if (typeof threshold !== 'number' || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) return false;
@@ -163,7 +165,8 @@ export function isDeleteConnectionArgs(args: unknown): args is DeleteConnectionA
 }
 
 export function isListMemoryLabelsArgs(args: unknown): args is ListMemoryLabelsArgs {
-  return typeof args === 'object' && args !== null;
+  return isPlainObject(args) && hasOnlyKeys(args, ['include_archived']) &&
+    (args.include_archived === undefined || typeof args.include_archived === 'boolean');
 }
 
 export function isQueryMemoriesArgs(args: unknown): args is QueryMemoriesArgs {

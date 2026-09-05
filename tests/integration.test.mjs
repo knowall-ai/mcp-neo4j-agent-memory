@@ -121,6 +121,28 @@ test('keyword search matches any word, ignores timestamps, and honours label cas
   assert.equal(none.length, 0, 'created_at must not be searchable');
 });
 
+test('exact search matches only equality on name, alias or email, case-insensitively', async () => {
+  const hits = await ok('search_memories', { query: 'benjamin weeks', search_mode: 'exact', depth: 0 });
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].memory._match, 'exact');
+  const byEmail = await ok('search_memories', { query: 'BEN@example.com', search_mode: 'exact', depth: 0 });
+  assert.equal(byEmail.length, 1);
+  const partial = await ok('search_memories', { query: 'Benjamin', search_mode: 'exact', depth: 0 });
+  assert.equal(partial.length, 0, 'a partial name is not an exact match');
+});
+
+test('archived memories are hidden from search and label listing unless asked for', async () => {
+  const id = (await ok('create_memory', { label: 'person', properties: { name: 'Old Contact', status: 'archived' } })).memory._id;
+  assert.equal((await ok('search_memories', { query: 'Old Contact', search_mode: 'keyword', depth: 0 })).length, 0);
+  assert.equal((await ok('search_memories', { query: 'Old Contact', search_mode: 'keyword', depth: 0, include_archived: true })).length, 1);
+  const labels = (await ok('list_memory_labels', {}))[0].labels.find((l) => l.label === 'person');
+  assert.equal(labels.count, 1, 'archived node not counted');
+  const all = (await ok('list_memory_labels', { include_archived: true }))[0].labels.find((l) => l.label === 'person');
+  assert.equal(all.count, 2);
+  await fails('list_memory_labels', { verbose: true }, /Invalid list_memory_labels/);
+  await ok('delete_memory', { nodeId: id });
+});
+
 test('semantic search finds Benjamin from "Ben" and reports the semantic match', async () => {
   const hits = await ok('search_memories', { query: 'Ben Weeks', search_mode: 'semantic', depth: 0, similarity_threshold: 0.3 }, 120000);
   const hit = hits.find((h) => h.memory._id === ids.ben);
@@ -133,6 +155,9 @@ test('search returns connections at depth 1 and validates arguments', async () =
   const hits = await ok('search_memories', { query: 'Benjamin', depth: 1 });
   const types = hits[0].connections.map((c) => c.relationship._type).sort();
   assert.deepEqual(types, ['LIVES_IN', 'WORKS_AT']);
+  const worksAt = hits[0].connections.find((c) => c.relationship._type === 'WORKS_AT').relationship;
+  assert.equal(worksAt._start, ids.ben, 'relationship direction is recoverable');
+  assert.equal(worksAt._end, ids.org);
   await fails('search_memories', { query: 'x', limit: -1 }, /Invalid search_memories/);
   await fails('search_memories', { query: 'x', depth: 9 }, /Invalid search_memories/);
   await fails('search_memories', { query: 'x', search_mod: 'semantic' }, /Invalid search_memories/);
@@ -192,6 +217,8 @@ test('dream relabels, merges true duplicates, skips identity conflicts, and flag
   const survivor = orgs.find((o) => o.name === 'Acme');
   assert.equal(survivor.email, 'a@x.com', 'survivor absorbed the merged email');
   assert.equal((await cypher('MATCH (n:organization) RETURN count(n) AS c'))[0].c.toNumber(), 0, 'lowercase label gone');
+  const stale = (await cypher("MATCH (n) WHERE n.embedding_model IS NULL AND coalesce(n.status,'') <> 'archived' RETURN count(n) AS c"))[0].c.toNumber();
+  assert.equal(stale, 0, 'relabelled nodes were re-embedded in the same dream');
   const s = await ok('memory_stats', {});
   if (s.embedder) assert.equal(s.embedded, s.nodes, 'dream re-embedded everything');
 });

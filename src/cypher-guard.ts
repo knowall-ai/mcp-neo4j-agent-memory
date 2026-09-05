@@ -18,9 +18,51 @@ export const READ_ONLY_PROCEDURES = new Set<string>([
   'db.index.fulltext.queryrelationships'
 ]);
 
-/** Remove line and block comments so nothing can hide between a keyword and what follows it. */
+/**
+ * Reduce Cypher to the text the guard should look at: comments become spaces, and the contents of
+ * string literals and backtick-quoted identifiers are blanked so a `//` or a keyword inside a
+ * string can neither hide code nor trigger a false positive. A small stateful scan, not a regex,
+ * because a `//` inside a quoted URL must not be treated as a comment.
+ */
 export function stripComments(cypher: string): string {
-  return cypher.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+  let out = '';
+  let i = 0;
+  const n = cypher.length;
+  while (i < n) {
+    const ch = cypher[i];
+    const next = cypher[i + 1];
+    if (ch === '/' && next === '/') {
+      while (i < n && cypher[i] !== '\n') i++;
+      out += ' ';
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      const end = cypher.indexOf('*/', i + 2);
+      i = end === -1 ? n : end + 2;
+      out += ' ';
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      out += quote;
+      i++;
+      while (i < n) {
+        const c = cypher[i];
+        if (c === '\\' && quote !== '`') { i += 2; continue; }      // escaped char inside a string
+        if (c === quote) {
+          if (cypher[i + 1] === quote) { i += 2; continue; }         // doubled quote
+          break;
+        }
+        i++;
+      }
+      out += quote;                                                   // literal contents dropped
+      i++;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
 }
 
 /** Returns why the Cypher is not read-only, or null when it passes the guard. */

@@ -1,7 +1,7 @@
 import { cosine } from './embeddings.js';
 import { contentKeys } from './hygiene.js';
 
-export type SearchMode = 'hybrid' | 'keyword' | 'semantic';
+export type SearchMode = 'hybrid' | 'keyword' | 'semantic' | 'exact';
 
 export interface Candidate {
   id: number;
@@ -11,7 +11,15 @@ export interface Candidate {
 export interface Ranked {
   id: number;
   score: number;
-  match: 'keyword' | 'semantic';
+  match: 'keyword' | 'semantic' | 'exact';
+}
+
+/** Case-insensitive equality on name, aliases or email: the lookup to run before creating a memory. */
+export function exactMatches(query: string, props: Record<string, any>): boolean {
+  const wanted = query.trim().toLowerCase();
+  if (!wanted) return false;
+  const values: unknown[] = [props.name, props.email, ...(Array.isArray(props.aliases) ? props.aliases : [])];
+  return values.some((v) => typeof v === 'string' && v.trim().toLowerCase() === wanted);
 }
 
 export function keywordMatches(query: string, props: Record<string, any>): boolean {
@@ -58,6 +66,15 @@ export function rank(candidates: Candidate[], opts: {
 
   const results: Ranked[] = [];
   const seen = new Set<number>();
+
+  if (opts.mode === 'exact') {
+    for (const candidate of candidates) {
+      if (exactMatches(trimmedQuery, candidate.props)) {
+        results.push({ id: candidate.id, score: 1, match: 'exact' });
+      }
+    }
+    return results.sort(compareRankedBy(candidates));
+  }
 
   if (opts.mode === 'hybrid' || opts.mode === 'keyword') {
     for (const candidate of candidates) {

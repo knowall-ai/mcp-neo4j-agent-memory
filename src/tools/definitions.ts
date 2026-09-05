@@ -44,14 +44,18 @@ export const tools: Tool[] = [
         },
         search_mode: {
           type: 'string',
-          enum: ['hybrid', 'keyword', 'semantic'],
-          description: 'Search mode: hybrid (default), keyword-only, or semantic-only.',
+          enum: ['hybrid', 'keyword', 'semantic', 'exact'],
+          description: 'Search mode: hybrid (default), keyword-only, semantic-only, or exact (case-insensitive equality on name/aliases/email: use before creating a memory).',
         },
         similarity_threshold: {
           type: 'number',
           minimum: 0,
           maximum: 1,
           description: 'Semantic similarity threshold, 0 to 1 inclusive, defaults to 0.4.',
+        },
+        include_archived: {
+          type: 'boolean',
+          description: 'Include memories with status "archived" (excluded by default).',
         },
       },
       required: [],
@@ -66,7 +70,7 @@ export const tools: Tool[] = [
       properties: {
         label: {
           type: 'string',
-          description: 'Memory label in lowercase (use list_memory_labels first to check existing labels for consistency) - common: person, place, organization, project, event, topic, object, animal, plant, food, activity, media, skill, document, meeting, task, habit, health, vehicle, tool, idea, goal',
+          description: 'Memory label: a plain identifier, Capitalised singular by convention (Person, Place, Organization, Project, Event, Topic, Object, Animal, Concept, Meeting, Decision…). Use list_memory_labels first for consistency; dream canonicalises lowercase labels.',
         },
         properties: {
           type: 'object',
@@ -191,7 +195,12 @@ export const tools: Tool[] = [
     description: 'List all unique memory labels currently in use with their counts (useful for getting an overview of the knowledge graph)',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        include_archived: {
+          type: 'boolean',
+          description: 'Include labels of archived memories (excluded by default).',
+        },
+      },
       required: [],
     },
   },
