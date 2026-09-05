@@ -9,7 +9,8 @@ report anything you find, and please do it privately.
 **Please do not open a public issue for security problems.**
 
 - Preferred: use GitHub's private vulnerability reporting on this repository
-  (**Security → Report a vulnerability**). It creates a private advisory only maintainers can see.
+  (**Security → Report a vulnerability**). It creates a proposed advisory that only you and the
+  repository's security managers can see.
 - Otherwise: email **support@knowall.ai**. If you need to encrypt, say so in a first message and
   we will send a key.
 
@@ -44,8 +45,10 @@ Things we would particularly like to hear about:
 - Ways a crafted prompt or memory could make an agent's recall pull in content it should not.
 
 Out of scope: vulnerabilities in Neo4j, APOC, Node.js, Python or the embedding providers
-themselves (please report those upstream), issues that require a compromised host or Neo4j
-credentials to begin with, and findings from automated scanners with no demonstrated impact.
+themselves (please report those upstream), issues that require an already-compromised host or
+unauthorised access to the Neo4j credentials, and findings from automated scanners with no
+demonstrated impact. Credential leakage and access-control failures that you can reproduce with
+your own authenticated setup are in scope.
 
 ## Safe harbour
 
