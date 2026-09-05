@@ -65,10 +65,7 @@ Unlike traditional approaches that embed complex logic in tools, this server pro
 - **Maximum flexibility**: The LLM can implement any strategy without tool limitations
 
 ### Search Behavior
-The `search_memories` tool uses word tokenization:
-- Query "John Smith" finds memories containing "John" OR "Smith"
-- This returns more results, letting the LLM pick the most relevant
-- Better than exact substring matching for names and multi-word queries
+`search_memories` is hybrid: keyword hits (any word of the query as a substring of any property) rank first, then semantic matches above a similarity threshold. See **Search** below.
 
 This approach makes the system more powerful and adaptable, as improvements in LLM capabilities directly translate to better memory management.
 
