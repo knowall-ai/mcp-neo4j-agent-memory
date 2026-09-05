@@ -28,7 +28,7 @@ jobs:
           if ! echo "$PR_TITLE" | grep -Eq "$title_regex"; then
             echo "::error::PR title must start with a conventional-commit prefix (feat:, fix:, chore:, docs:, ...). Got: '$PR_TITLE'"; fail=1
           fi
-          body_len=$(echo -n "${PR_BODY:-}" | wc -c)
+          body_len=$(echo -n "${PR_BODY:-}" | LC_ALL=C.UTF-8 wc -m)   # characters, not bytes
           if [ "$body_len" -lt 40 ]; then
             echo "::error::PR body is missing or too short (<40 chars)."; fail=1
           fi

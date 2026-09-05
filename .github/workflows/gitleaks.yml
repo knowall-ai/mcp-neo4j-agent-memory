@@ -19,6 +19,8 @@ jobs:
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
           curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
-          sha256sum --check --ignore-missing checksums.txt
+          # require the exact entry for our archive; a checksums file that omits it must fail, not pass
+          grep -E " gitleaks_${GITLEAKS_VERSION}_linux_x64\.tar\.gz$" checksums.txt > archive.sha256
+          sha256sum --check --strict archive.sha256
           tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
           ./gitleaks dir . --no-banner --redact --exit-code 1
