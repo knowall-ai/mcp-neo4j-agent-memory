@@ -1,10 +1,11 @@
 {
-  "name": "@knowall-ai/mcp-neo4j-agent-memory",
-  "version": "0.2.5",
-  "description": "Graph-based memory system for AI agents. Store people, places, organizations as nodes. Build semantic relationships (KNOWS, WORKS_AT, CREATED). Word-tokenized search finds partial matches. Filter by date, traverse relationships, maintain temporal context. Simple tools, LLM handles complexity. 10 tools for complete memory management.",
+  "name": "@knowall-ai/reverie",
+  "version": "0.3.0",
+  "description": "Reverie \u2014 graph memory that dreams. Graph-based memory system for AI agents. Store people, places, organizations as nodes. Build semantic relationships (KNOWS, WORKS_AT, CREATED). Word-tokenized search finds partial matches. Filter by date, traverse relationships, maintain temporal context. Simple tools, LLM handles complexity. 10 tools for complete memory management.",
   "type": "module",
   "module": "./src/index.ts",
   "bin": {
+    "reverie": "build/index.js",
     "mcp-neo4j-agent-memory": "build/index.js"
   },
   "files": [
@@ -35,7 +36,10 @@
     "ai-memory",
     "voice-assistant",
     "agent-memory",
-    "knowledge-graph"
+    "knowledge-graph",
+    "reverie",
+    "memory",
+    "ai-agents"
   ],
   "author": "KnowAll AI",
   "contributors": [
@@ -44,10 +48,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/KnowAll-AI/mcp-neo4j-agent-memory.git"
+    "url": "git+https://github.com/knowall-ai/mcp-reverie.git"
   },
   "bugs": {
-    "url": "https://github.com/KnowAll-AI/mcp-neo4j-agent-memory/issues"
+    "url": "https://github.com/knowall-ai/mcp-reverie/issues"
   },
-  "homepage": "https://github.com/KnowAll-AI/mcp-neo4j-agent-memory#readme"
+  "homepage": "https://github.com/knowall-ai/mcp-reverie#readme"
 }

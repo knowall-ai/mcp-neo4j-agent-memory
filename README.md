@@ -1,17 +1,26 @@
-[![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
+# Reverie — graph memory that dreams
 
-# Neo4j Agent Memory MCP Server
+**Reverie** is KnowAll AI's Neo4j knowledge-graph memory for AI agents, served over MCP. Until `@knowall-ai/reverie` is published to npm, install the legacy package `@knowall-ai/mcp-neo4j-agent-memory` (0.2.x). The GitHub repository is now `knowall-ai/mcp-reverie`, and old URLs redirect.
 
-![Neo4j Agent Memory Banner](./images/neo4j-agent-memory-05.png)
+![Reverie — graph memory that dreams](./images/reverie-banner.png)
 
-A specialized MCP server that bridges Neo4j graph database with AI agents, providing memory-focused tools for storing, recalling, and connecting information in a knowledge graph.
+Reverie turns an agent's memory from a pile of facts into a **map of the entities in its world and how they relate**, and keeps that map healthy. It is an MCP server, so any agent that speaks the Model Context Protocol (Claude Desktop, OpenClaw, Azure AI Foundry, Cursor…) gets the same graph; a [Hermes Agent](https://hermes-agent.nousresearch.com) memory-provider flavour lives in [hermes-reverie](https://github.com/knowall-ai/hermes-reverie).
+
+## Why Reverie
+
+- **A typed entity graph, not a fact store.** People, organisations, projects, places, concepts, meetings and decisions are nodes with typed relationships. "Who at the Irish FA have we talked to about Winnie?" is a graph walk, not a similarity search.
+- **Search that finds "Ben" when you say "Benjamin".** Hybrid keyword + semantic search, with local embeddings by default (no API key) and OpenAI, Azure OpenAI, Ollama or Voyage a config switch away.
+- **It dreams.** A `dream` tool merges duplicates safely, canonicalises labels, re-embeds, counts orphans and flags nodes that have become property dumps, so a nightly job can keep the graph clean.
+- **One graph, any agent.** KnowAll runs Sallie (OpenClaw) and Poppie (Hermes) against the same conventions; Reverie is how they share what they know.
+- **LLM-driven, transparent tools.** Simple atomic operations; the model does the entity recognition and conflict resolution, and every action is explicit.
+- **Yours to run.** Neo4j on your own machine or VM. Nothing leaves it unless you choose a remote embedding provider.
 
 ## Quick Start 🚀
 
 You can run this MCP server directly using npx:
 
 ```bash
-npx @knowall-ai/mcp-neo4j-agent-memory
+npx @knowall-ai/mcp-neo4j-agent-memory   # becomes `npx @knowall-ai/reverie` once 0.4.0 is published
 ```
 
 Or add it to your Claude Desktop configuration:
@@ -37,7 +46,7 @@ Or add it to your Claude Desktop configuration:
 
 - 🧠 **Persistent Memory Storage** - Store and retrieve memories across conversations
 - 🔗 **Semantic Relationships** - Create meaningful connections between memories (KNOWS, WORKS_AT, CREATED, etc.)
-- 🔍 **Intelligent Search** - Natural language search across all memory properties and relationships
+- 🔍 **Hybrid Search** - Keyword plus semantic search across all memory properties, with local embeddings by default
 - 🏷️ **Flexible Labeling** - Use any label for memories (person, place, project, idea, etc.)
 - ⏰ **Temporal Tracking** - Automatic timestamps and date-based queries
 - 🌐 **Graph Exploration** - Traverse relationships to discover connected information
@@ -131,9 +140,8 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 
 ### Installing via Smithery
 
-[![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
 
-To install Neo4j Agent Memory MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory):
+To install Reverie for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory):
 
 ```bash
 npx -y @smithery/cli install @knowall-ai/mcp-neo4j-agent-memory --client claude
@@ -143,8 +151,8 @@ npx -y @smithery/cli install @knowall-ai/mcp-neo4j-agent-memory --client claude
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/KnowAll-AI/mcp-neo4j-agent-memory.git
-cd mcp-neo4j-agent-memory
+git clone https://github.com/knowall-ai/mcp-reverie.git
+cd mcp-reverie
 ```
 
 2. Install dependencies:

@@ -11,7 +11,7 @@ Add the following entry to the Community Servers section in README.md (in alphab
 
 ### Under "N" section:
 ```markdown
-- [Neo4j Agent Memory](https://github.com/KnowAll-AI/mcp-neo4j-agent-memory) - Memory management for AI agents using Neo4j knowledge graphs
+- [Reverie](https://github.com/knowall-ai/mcp-reverie) - Memory management for AI agents using Neo4j knowledge graphs
 ```
 
 ## Why this server is useful
