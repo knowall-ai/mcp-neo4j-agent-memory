@@ -4,6 +4,10 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import neo4j from 'neo4j-driver';
 import { McpClient } from './helpers/mcp-client.mjs';
+import { mcpCall, mcpRequest, readSse, startServe } from './helpers/http.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const uri = process.env.NEO4J_URI ?? 'bolt://127.0.0.1:7687';
 const user = process.env.NEO4J_USERNAME ?? 'neo4j';
@@ -245,4 +249,81 @@ test('list_memory_labels and get_guidance', async () => {
   assert.match(all, /What belongs in the graph/);
   assert.match(await ok('get_guidance', { topic: 'best-practices' }), /ALWAYS SEARCH FIRST/);
   assert.match(await ok('get_guidance', { topic: 'nonsense' }), /Unknown topic/);
+});
+
+test('reverie serve: MCP over HTTP, brain snapshot and live events', async () => {
+  const token = 'integration-token';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-serve-'));
+  const serve = await startServe({
+    NEO4J_URI: uri, NEO4J_USERNAME: user, NEO4J_PASSWORD: password,
+    REVERIE_EMBEDDINGS: 'none',
+    REVERIE_SERVE_TOKEN: token,
+    REVERIE_EVENTS_PATH: path.join(dir, 'events.jsonl'),
+    REVERIE_USAGE_STATS_PATH: '', REVERIE_BOOST_STATE_PATH: '',
+    REVERIE_GRAPH_POLL_SECONDS: '1', REVERIE_STATE_SECONDS: '1', REVERIE_EVENT_POLL_SECONDS: '0.2'
+  });
+  const created = [];
+  try {
+    const health = await (await fetch(`${serve.url}/health`)).json();
+    assert.equal(health.neo4j, true);
+
+    const init = await mcpRequest(serve.url, token, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '0' } });
+    assert.equal(init.status, 200);
+    assert.equal(init.body.result.serverInfo.name, 'reverie');
+
+    const first = await mcpCall(serve.url, token, 'create_memory', { label: 'Person', properties: { name: 'Brain Test', role: 'Fixture' } });
+    assert.ok(first.ok, first.error);
+    created.push(first.data.memory._id);
+    const link = await mcpCall(serve.url, token, 'create_connection', { fromMemoryId: first.data.memory._id, toMemoryId: ids.ben, type: 'KNOWS' });
+    assert.ok(link.ok, link.error);
+
+    const graph = await fetch(`${serve.url}/brain/graph?limit=50`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(graph.status, 200);
+    const snap = await graph.json();
+    const node = snap.nodes.find((n) => n.id === String(first.data.memory._id));
+    assert.ok(node, 'created node is in the snapshot');
+    assert.equal(node.label, 'Person');
+    assert.equal(node.name, 'Brain Test');
+    assert.ok(node.degree >= 1, 'degree counts the KNOWS relationship');
+    assert.ok(Number.isInteger(node.createdAt) && node.createdAt > 1.7e9, 'ISO created_at became epoch seconds');
+    assert.equal(node.props.role, 'Fixture');
+    assert.ok(!('embedding' in node.props) && !('name_embedding' in node.props));
+    assert.ok(snap.rels.some((r) => r.type === 'KNOWS' && r.source === node.id && r.target === String(ids.ben)));
+    assert.ok(snap.stats.labels.Person >= 2);
+    assert.equal(snap.stats.shown, snap.nodes.length);
+    assert.equal(snap.state.eventsAvailable, true);
+    assert.ok(snap.state.recentWrites >= 2, 'remember + connect were logged');
+    assert.equal(snap.state.dreaming, false);
+
+    const stateOnly = await (await fetch(`${serve.url}/brain/state`, { headers: { Authorization: `Bearer ${token}` } })).json();
+    assert.equal(typeof stateOnly.lastActivityAt, 'number');
+
+    // Live stream: history first, then a state line, then a graph diff once another node appears.
+    let second;
+    const stream = await readSse(serve.url, token, {
+      timeoutMs: 15000,
+      until: (events) => {
+        if (!second && events.some((e) => e.event === 'state')) {
+          second = mcpCall(serve.url, token, 'create_memory', { label: 'Project', properties: { name: 'Brain Stream' } })
+            .then((r) => { if (r.ok) created.push(r.data.memory._id); return r; });
+        }
+        return events.some((e) => e.event === 'graph' && e.data.nodesAdded.some((n) => n.name === 'Brain Stream'));
+      }
+    });
+    assert.equal(stream.status, 200);
+    const kinds = stream.events.map((e) => e.event);
+    assert.ok(kinds.includes('activation'), 'replayed recent activation history');
+    assert.ok(stream.events.some((e) => e.event === 'activation' && e.data.kind === 'remember' && e.data.name === 'Brain Test'));
+    assert.ok(stream.events.some((e) => e.event === 'activation' && e.data.kind === 'connect'));
+    assert.ok(kinds.includes('state'));
+    const diff = stream.events.find((e) => e.event === 'graph');
+    assert.ok(diff, `expected a graph diff, got ${kinds.join(',')}`);
+    assert.ok(diff.data.nodesAdded.some((n) => n.name === 'Brain Stream' && n.label === 'Project'));
+    assert.ok(diff.data.stats && diff.data.stats.labels.Project >= 1);
+    assert.ok(second && (await second).ok);
+  } finally {
+    for (const id of created) await ok('delete_memory', { nodeId: id });
+    await serve.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

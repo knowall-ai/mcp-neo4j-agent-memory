@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { neo4jConfigError, neo4jConfigFromEnv } from './config.js';
 import { Neo4jServer } from './server.js';
 
 // Debug environment for Smithery
@@ -6,66 +7,50 @@ if (process.env.DEBUG_SMITHERY) {
   console.error('Environment variables:', {
     NEO4J_URI: process.env.NEO4J_URI,
     NEO4J_USERNAME: process.env.NEO4J_USERNAME,
-    NEO4J_PASSWORD: process.env.NEO4J_PASSWORD,
+    NEO4J_PASSWORD: process.env.NEO4J_PASSWORD ? '(set)' : undefined,
     NEO4J_DATABASE: process.env.NEO4J_DATABASE
   });
 }
 
-// Check if we have database configuration (ignore empty strings)
-const uri = process.env.NEO4J_URI?.trim();
-const username = process.env.NEO4J_USERNAME?.trim();
-const password = process.env.NEO4J_PASSWORD?.trim();
-const hasDbConfig = uri && username && password;
+const configError = neo4jConfigError();
+if (configError) {
+  console.error(configError);
+  process.exit(1);
+}
+const config = neo4jConfigFromEnv();
 
-// Only validate environment variables if at least one non-empty value is provided
-if ((uri || username || password) && !hasDbConfig) {
-  // If any Neo4j env var is set, all required ones must be set
-  if (!password) {
-    console.error('Error: NEO4J_PASSWORD environment variable is required');
+if (process.argv[2] === 'serve') {
+  const { ConfigError, installShutdown, startHttpServer } = await import('./http-server.js');
+  try {
+    installShutdown(await startHttpServer());
+  } catch (error) {
+    console.error(error instanceof ConfigError ? `Error: ${error.message}` : `Failed to start Reverie HTTP server: ${error instanceof Error ? error.message : error}`);
     process.exit(1);
   }
-  if (!uri) {
-    console.error('Error: NEO4J_URI environment variable is required');
-    process.exit(1);
-  }
-  if (!username) {
-    console.error('Error: NEO4J_USERNAME environment variable is required');
-    process.exit(1);
-  }
+} else if (process.argv.length > 2) {
+  console.error('Usage: reverie [serve]');
+  process.exit(2);
+} else {
+  startStdio();
 }
 
-const config = hasDbConfig ? {
-  uri: uri!,
-  username: username!,
-  password: password!,
-  database: process.env.NEO4J_DATABASE?.trim() || undefined, // Optional for Neo4j Community Edition
-} : undefined;
+function startStdio(): void {
+  const server = new Neo4jServer(config);
 
-// サーバーの起動
-const server = new Neo4jServer(config);
-
-server.run().catch((error) => {
-  console.error('Failed to start Neo4j MCP server:', error);
-  process.exit(1);
-});
-
-// 終了時のクリーンアップ
-process.on('SIGINT', async () => {
-  try {
-    await server.close();
-    process.exit(0);
-  } catch (error) {
-    console.error('Error during shutdown:', error);
+  server.run().catch((error) => {
+    console.error('Failed to start Neo4j MCP server:', error);
     process.exit(1);
-  }
-});
+  });
 
-process.on('SIGTERM', async () => {
-  try {
-    await server.close();
-    process.exit(0);
-  } catch (error) {
-    console.error('Error during shutdown:', error);
-    process.exit(1);
-  }
-});
+  const shutdown = async () => {
+    try {
+      await server.close();
+      process.exit(0);
+    } catch (error) {
+      console.error('Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}

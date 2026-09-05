@@ -1,6 +1,6 @@
 {
   "name": "@knowall-ai/reverie",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Reverie — graph memory that dreams. Graph-based memory system for AI agents. Store people, places, organizations as nodes. Build semantic relationships (KNOWS, WORKS_AT, CREATED). Hybrid keyword + semantic search finds partial matches and close variants. Filter by date, traverse relationships, maintain temporal context. Simple tools, LLM handles complexity. 12 tools for complete memory management.",
   "type": "module",
   "module": "./src/index.ts",
@@ -16,6 +16,7 @@
     "prepare": "npm run build",
     "watch": "tsc --watch",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "start:http": "node build/index.js serve",
     "test": "node --test tests/unit.test.mjs tests/startup.test.mjs tests/integration.test.mjs",
     "test:unit": "node --test tests/unit.test.mjs tests/startup.test.mjs",
     "test:integration": "node --test tests/integration.test.mjs",

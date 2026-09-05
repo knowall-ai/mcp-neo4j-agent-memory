@@ -8,6 +8,12 @@ import { readOnlyViolation, stripComments } from '../build/cypher-guard.js';
 import { cypherIdentifier, isCreateConnectionArgs, isCreateMemoryArgs, isDreamArgs, isMemoryStatsArgs, isQueryMemoriesArgs, isSearchMemoriesArgs } from '../build/types.js';
 import { lazyEmbedBatch } from '../build/hygiene.js';
 import { secureEndpoint } from '../build/embeddings.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { emit, eventsPath, readSince, tail, MAX_BYTES } from '../build/events.js';
+import { cleanProps, clampLimit, diffSnapshot, isEmptyDiff, presenceStats, state, toEpochSeconds, MAX_LIMIT } from '../build/brain.js';
+import { isAuthorized } from '../build/http-server.js';
 
 function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} ≈ ${expected}`);
@@ -192,6 +198,147 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.strictEqual(secureEndpoint('https://api.openai.com/v1/', 'X'), 'https://api.openai.com/v1');
   assert.strictEqual(secureEndpoint('http://localhost:8080/v1', 'X'), 'http://localhost:8080/v1');
   assert.throws(() => secureEndpoint('http://proxy.example.com/v1', 'X'));
+
+  // ---- activation log (events.js)
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-events-'));
+    const file = path.join(dir, 'nested', 'events.jsonl');
+    const env = { REVERIE_EVENTS_PATH: file };
+    assert.strictEqual(eventsPath({}), path.join(os.homedir(), '.reverie', 'events.jsonl'));
+    assert.strictEqual(eventsPath({ REVERIE_EVENTS_PATH: '  ' }), null, 'blank disables the log');
+    assert.strictEqual(eventsPath({ REVERIE_EVENTS_PATH: '~/x.jsonl' }), path.join(os.homedir(), 'x.jsonl'));
+    emit('recall', { ids: ['1'], terms: ['ben'] }, env);
+    emit('remember', { id: '2', name: 'Ben' }, env);
+    const first = tail(file, 10);
+    assert.strictEqual(first.length, 2);
+    assert.strictEqual(first[0].kind, 'recall');
+    assert.ok(typeof first[0].ts === 'number' && first[0].ts > 1.7e9 && first[0].ts < 1e12, 'ts is epoch seconds');
+    assert.deepStrictEqual(tail(file, 1).map((e) => e.kind), ['remember'], 'tail keeps the newest');
+    const since = readSince(file, 0);
+    assert.strictEqual(since.events.length, 2);
+    assert.deepStrictEqual(readSince(file, since.offset).events, [], 'nothing new after the offset');
+    fs.appendFileSync(file, 'not json\n{"kind":"connect","ts":1}\n{"partial":');
+    const more = readSince(file, since.offset);
+    assert.deepStrictEqual(more.events.map((e) => e.kind), ['connect'], 'bad lines skipped, partial line left for next read');
+    fs.appendFileSync(file, '"x"}\n');
+    assert.strictEqual(readSince(file, more.offset).events.length, 0, 'the completed partial line has no kind, so it is skipped');
+    fs.writeFileSync(file, '{"kind":"forget","ts":2}\n');
+    assert.deepStrictEqual(readSince(file, 10_000).events.map((e) => e.kind), ['forget'], 'a shrunk (trimmed) file restarts from 0');
+    assert.deepStrictEqual(readSince(path.join(dir, 'missing.jsonl'), 5), { events: [], offset: 0 });
+    assert.deepStrictEqual(tail(path.join(dir, 'missing.jsonl')), []);
+    emit('noop', {}, { REVERIE_EVENTS_PATH: '' });
+    // trimming: exceed MAX_BYTES with padded events, then the file must hold at most 5000 lines
+    const big = path.join(dir, 'big.jsonl');
+    fs.writeFileSync(big, Array.from({ length: 6000 }, (_, i) => JSON.stringify({ ts: i, kind: 'recall', pad: 'x'.repeat(1000) })).join('\n') + '\n');
+    assert.ok(fs.statSync(big).size > MAX_BYTES);
+    emit('recall', { pad: 'y' }, { REVERIE_EVENTS_PATH: big });
+    const lines = fs.readFileSync(big, 'utf8').split('\n').filter(Boolean);
+    assert.ok(lines.length <= 5000 && lines.length >= 4999, `trimmed to ${lines.length} lines`);
+    assert.match(lines[lines.length - 1], /"pad":"y"/, 'newest event survives the trim');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // ---- brain helpers
+  assert.strictEqual(toEpochSeconds(1_700_000_000), 1_700_000_000);
+  assert.strictEqual(toEpochSeconds(1_700_000_000_123), 1_700_000_000, 'milliseconds become seconds');
+  assert.strictEqual(toEpochSeconds('2026-09-05T12:00:00.000Z'), Math.round(Date.UTC(2026, 8, 5, 12) / 1000));
+  assert.strictEqual(toEpochSeconds('1700000000'), 1_700_000_000, 'numeric strings');
+  assert.strictEqual(toEpochSeconds('garbage'), 0);
+  assert.strictEqual(toEpochSeconds(null), 0);
+  assert.strictEqual(toEpochSeconds({ toString: () => '2026-01-01T00:00:00Z' }), Math.round(Date.UTC(2026, 0, 1) / 1000), 'Neo4j temporals stringify');
+  assert.strictEqual(clampLimit('400'), 400);
+  assert.strictEqual(clampLimit('0'), 1);
+  assert.strictEqual(clampLimit(99_999), MAX_LIMIT);
+  assert.strictEqual(clampLimit('abc'), 400);
+  assert.strictEqual(clampLimit(null, 7), 7);
+  {
+    const cleaned = cleanProps({
+      name: 'Ben', age: 40, ok: true, none: null, embedding: [1, 2], name_embedding: [1], embedding_model: 'm', embedded_at: 'x',
+      long: 'a'.repeat(400), tags: Array.from({ length: 20 }, (_, i) => i), mixed: ['a', { b: 1 }], nested: { a: 1 },
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`k${i}`, i]))
+    });
+    assert.ok(!('embedding' in cleaned) && !('name_embedding' in cleaned) && !('embedding_model' in cleaned) && !('embedded_at' in cleaned));
+    assert.ok(!('mixed' in cleaned) && !('nested' in cleaned), 'non-primitive values dropped');
+    assert.strictEqual(cleaned.long.length, 301, 'truncated with an ellipsis');
+    assert.strictEqual(cleaned.tags.length, 12);
+    assert.deepStrictEqual([cleaned.name, cleaned.age, cleaned.ok, cleaned.none], ['Ben', 40, true, null]);
+    assert.ok(Object.keys(cleaned).length <= 24, `at most 24 keys, got ${Object.keys(cleaned).length}`);
+  }
+  {
+    const node = (id, degree, updatedAt) => ({ id, label: 'Person', labels: ['Person'], name: id, degree, updatedAt, createdAt: 1, props: {} });
+    const rel = (id, source, target) => ({ id, type: 'KNOWS', source, target, updatedAt: 1 });
+    const stats = { nodeCount: 0, relCount: 0, labels: {}, relTypes: {}, shown: 0 };
+    const prev = { nodes: [node('1', 1, 10), node('2', 0, 10), node('3', 0, 10)], rels: [rel('r1', '1', '2'), rel('r2', '2', '3')], stats, generatedAt: 1 };
+    const curr = { nodes: [node('1', 2, 10), node('2', 0, 11), node('4', 0, 10)], rels: [rel('r1', '1', '2'), rel('r3', '1', '4')], stats, generatedAt: 2 };
+    const diff = diffSnapshot(prev, curr);
+    assert.deepStrictEqual(diff.nodesAdded.map((n) => n.id), ['4']);
+    assert.deepStrictEqual(diff.nodesUpdated.map((n) => n.id), ['1', '2'], 'degree or updatedAt changes');
+    assert.deepStrictEqual(diff.nodesRemoved, ['3']);
+    assert.deepStrictEqual(diff.relsAdded.map((r) => r.id), ['r3']);
+    assert.deepStrictEqual(diff.relsRemoved, ['r2']);
+    assert.strictEqual(isEmptyDiff(diff), false);
+    assert.strictEqual(isEmptyDiff(diffSnapshot(curr, curr)), true);
+  }
+  {
+    const now = 1_000_000;
+    const quiet = { REVERIE_EVENTS_PATH: '', REVERIE_USAGE_STATS_PATH: '', REVERIE_BOOST_STATE_PATH: '' };
+    const idle = state([], now, quiet);
+    assert.deepStrictEqual(
+      [idle.dreaming, idle.lastActivityAt, idle.lastDreamAt, idle.lastDreamName, idle.recentReads, idle.recentWrites, idle.eventsAvailable, idle.usage, idle.boost],
+      [false, null, null, null, 0, 0, false, null, null]
+    );
+    assert.ok('cpuPercent' in idle && 'load1' in idle && 'memPercent' in idle && 'memUsedGb' in idle && 'memTotalGb' in idle);
+    const events = [
+      { ts: now - 3000, kind: 'recall' },
+      { ts: now - 600, kind: 'recall' },
+      { ts: now - 500, kind: 'remember' },
+      { ts: now - 400, kind: 'connect' },
+      { ts: now - 300, kind: 'forget' },
+      { ts: now - 200, kind: 'dream.start', name: 'dream-1' }
+    ];
+    const dreaming = state(events, now, quiet);
+    assert.strictEqual(dreaming.dreaming, true, 'dream.start without dream.end within 30 min');
+    assert.strictEqual(dreaming.lastActivityAt, now - 200);
+    assert.strictEqual(dreaming.lastDreamAt, now - 200);
+    assert.strictEqual(dreaming.lastDreamName, 'dream-1');
+    assert.strictEqual(dreaming.recentReads, 1, 'only the recall inside the 15 minute window');
+    assert.strictEqual(dreaming.recentWrites, 3);
+    const ended = state([...events, { ts: now - 100, kind: 'dream.end', name: 'dream-1' }], now, quiet);
+    assert.strictEqual(ended.dreaming, false);
+    assert.strictEqual(ended.lastDreamAt, now - 100);
+    const stale = state([{ ts: now - 3600, kind: 'dream.start', name: 'old' }], now, quiet);
+    assert.strictEqual(stale.dreaming, false, 'a dream.start older than 30 min is not dreaming');
+    assert.strictEqual(stale.lastDreamName, 'old');
+    // dream diary directory wins for lastDream* when configured
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-dreams-'));
+    fs.writeFileSync(path.join(dir, 'first.md'), '#');
+    const diary = state(events, now, { ...quiet, REVERIE_DREAMS_DIR: dir });
+    assert.strictEqual(diary.lastDreamName, 'first');
+    assert.ok(diary.lastDreamAt > 1.7e9);
+    // presence files: usage must be fresh, boost any age, invalid JSON ignored
+    fs.writeFileSync(path.join(dir, 'usage.json'), JSON.stringify({ mode: 'sub', sub: { pct_left: 42 } }));
+    fs.writeFileSync(path.join(dir, 'boost.json'), JSON.stringify({ active: true, tier: 'fast' }));
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{nope');
+    const present = presenceStats({ REVERIE_USAGE_STATS_PATH: path.join(dir, 'usage.json'), REVERIE_BOOST_STATE_PATH: path.join(dir, 'boost.json') });
+    assert.strictEqual(present.usage.sub.pct_left, 42);
+    assert.strictEqual(present.boost.tier, 'fast');
+    const old = Date.now() / 1000 - 1000;
+    fs.utimesSync(path.join(dir, 'usage.json'), old, old);
+    assert.strictEqual(presenceStats({ REVERIE_USAGE_STATS_PATH: path.join(dir, 'usage.json'), REVERIE_BOOST_STATE_PATH: path.join(dir, 'bad.json') }).usage, null, 'usage older than 15 min is stale');
+    assert.strictEqual(presenceStats({ REVERIE_USAGE_STATS_PATH: '', REVERIE_BOOST_STATE_PATH: path.join(dir, 'bad.json') }).boost, null);
+    assert.strictEqual(presenceStats({ REVERIE_USAGE_STATS_PATH: '', REVERIE_BOOST_STATE_PATH: path.join(dir, 'missing.json') }).boost, null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // ---- bearer auth
+  assert.strictEqual(isAuthorized('Bearer secret-token', 'secret-token'), true);
+  assert.strictEqual(isAuthorized('bearer secret-token', 'secret-token'), true, 'scheme is case-insensitive');
+  assert.strictEqual(isAuthorized('Bearer secret-tokeN', 'secret-token'), false);
+  assert.strictEqual(isAuthorized('Bearer secret', 'secret-token'), false, 'different length');
+  assert.strictEqual(isAuthorized('Basic c2VjcmV0', 'secret-token'), false);
+  assert.strictEqual(isAuthorized(undefined, 'secret-token'), false);
+  assert.strictEqual(isAuthorized('Bearer ', 'secret-token'), false);
+  assert.strictEqual(isAuthorized('Bearer x', ''), false, 'an empty server token never authorises');
 
   console.log('PASS test-embeddings-unit: embeddings helpers and hybrid ranking behave as expected');
 } catch (error) {
