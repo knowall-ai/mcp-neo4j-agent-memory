@@ -130,7 +130,7 @@ export async function handleToolCall(
           return jsonResult([]);
         }
 
-        const result = await fetchMemories(neo4jClient, rankedIds, depth, orderBy, limit);
+        const result = await fetchMemories(neo4jClient, rankedIds, depth, orderBy, limit, Boolean(args.include_archived));
         const scoring = new Map<number, { score: number; match: Ranked['match'] }>(
           topRanked.map((item) => [item.id, { score: Number(item.score.toFixed(2)), match: item.match }])
         );
@@ -674,7 +674,8 @@ async function fetchMemories(
   memoryIds: number[],
   depth: number,
   orderBy: string,
-  limit: number
+  limit: number,
+  includeArchived: boolean
 ): Promise<Record<string, any>[]> {
   let finalQuery = `
     MATCH (memory)
@@ -682,8 +683,10 @@ async function fetchMemories(
   `;
 
   if (depth > 0) {
+    // Archived nodes are hidden from the neighbourhood too, and a path through one is not followed.
     finalQuery += `
       OPTIONAL MATCH path = (memory)-[*1..${depth}]-(related)
+      WHERE $includeArchived OR all(x IN nodes(path) WHERE coalesce(x.status, '') <> 'archived')
       RETURN memory, collect(DISTINCT {
         memory: related,
         relationship: relationships(path)[0],
@@ -700,7 +703,7 @@ async function fetchMemories(
     `;
   }
 
-  return neo4jClient.executeQuery(finalQuery, { memoryIds });
+  return neo4jClient.executeQuery(finalQuery, { memoryIds, includeArchived });
 }
 
 interface DuplicateGroupReport {

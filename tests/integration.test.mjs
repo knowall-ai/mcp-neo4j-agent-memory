@@ -140,6 +140,12 @@ test('archived memories are hidden from search and label listing unless asked fo
   const all = (await ok('list_memory_labels', { include_archived: true }))[0].labels.find((l) => l.label === 'person');
   assert.equal(all.count, 2);
   await fails('list_memory_labels', { verbose: true }, /Invalid list_memory_labels/);
+  // an archived neighbour does not appear in another memory's connections either
+  await ok('create_connection', { fromMemoryId: ids.ben, toMemoryId: id, type: 'KNOWS' });
+  const ben = (await ok('search_memories', { query: 'Benjamin', search_mode: 'keyword', depth: 1 }))[0];
+  assert.ok(!ben.connections.some((c) => c.memory._id === id), 'archived neighbour hidden');
+  const benAll = (await ok('search_memories', { query: 'Benjamin', search_mode: 'keyword', depth: 1, include_archived: true }))[0];
+  assert.ok(benAll.connections.some((c) => c.memory._id === id), 'archived neighbour shown when asked');
   await ok('delete_memory', { nodeId: id });
 });
 
