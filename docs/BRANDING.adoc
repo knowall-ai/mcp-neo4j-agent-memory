@@ -63,7 +63,8 @@ The wordmark is generated, not typeset. To make a matching one for another produ
 
 . Run gpt-image-1 with *two reference images*: `docs/brand/reverie-wordmark.png` (or the full banner) for the lettering style and the product's own backdrop for the scene. Ask for "the exact same outlined neon-green display lettering, letter for letter, on a dark plate, no other text, no icons, spelling exact".
 . Key the lettering out of its dark plate (subtract the 90th-percentile border colour, alpha from luminance) to get an RGBA cut-out; re-tint the RGB toward `#22c55e` keeping luminance if it came out teal.
-. Use the compositing script below with that cut-out; leave the stroke weight as generated. The glow is baked into the render: the recipe adds no blur to the wordmark.
+. Check the proportions against REVERIE: new renders tend to come out slightly condensed, so scale the cut-out horizontally until its letters have the same extended width-to-height ratio as the REVERIE lettering (about 4.9 : 1 for seven letters). Leave the stroke weight as generated.
+. Use the compositing script below with that cut-out. The glow is baked into the render: the recipe adds no blur to the wordmark.
 
 == Layout
 
@@ -77,7 +78,7 @@ All proportions are relative, so the same recipe works at any size.
 | Centred; width *53 %* of banner width (its natural size at 1536 px); top edge at y = 62 px on a 1024 px-tall banner.
 
 | Subtitle
-| Exactly the *same width as the wordmark lettering*; height *0.36 x* the lettering height (squat and bold, stretched with Lanczos); placed *0.60 x* subtitle height below the lettering.
+| Exactly the *same width as the wordmark's ink* (the bounding box of the strokes, not the file or the glow halo); height *0.36 x* the ink height (squat and bold, stretched with Lanczos); placed *0.60 x* subtitle height below the ink's bottom edge.
 
 | KnowAll.ai mark
 | White, bottom-right, width *11 %* of banner width, *3 %* margin on both sides.
