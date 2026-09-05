@@ -62,8 +62,8 @@ after(async () => {
   await driver.close();
 });
 
-const ok = async (name, args) => {
-  const r = await mcp.call(name, args);
+const ok = async (name, args, timeoutMs) => {
+  const r = await mcp.call(name, args, timeoutMs);
   assert.ok(r.ok, `${name} failed: ${r.error}`);
   return r.data;
 };
@@ -85,7 +85,7 @@ test('lists the twelve tools', async () => {
 const ids = {};
 
 test('create_memory stamps created_at and returns the node', async () => {
-  const r = await ok('create_memory', { label: 'person', properties: { name: 'Benjamin Weeks', email: 'ben@example.com', role: 'Founder' } });
+  const r = await ok('create_memory', { label: 'person', properties: { name: 'Benjamin Weeks', email: 'ben@example.com', aliases: ['Ben W'], role: 'Founder' } });
   assert.equal(r.memory.name, 'Benjamin Weeks');
   assert.match(r.memory.created_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(typeof r.memory._id, 'number');
@@ -127,6 +127,8 @@ test('exact search matches only equality on name, alias or email, case-insensiti
   assert.equal(hits[0].memory._match, 'exact');
   const byEmail = await ok('search_memories', { query: 'BEN@example.com', search_mode: 'exact', depth: 0 });
   assert.equal(byEmail.length, 1);
+  const byAlias = await ok('search_memories', { query: 'ben w', search_mode: 'exact', depth: 0 });
+  assert.equal(byAlias.length, 1, 'an alias is an exact match regardless of case');
   const partial = await ok('search_memories', { query: 'Benjamin', search_mode: 'exact', depth: 0 });
   assert.equal(partial.length, 0, 'a partial name is not an exact match');
 });
