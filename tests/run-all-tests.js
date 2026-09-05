@@ -7,6 +7,8 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const TEST_TIMEOUT_MS = 180000;
+
 const tests = [
   'test-embeddings-unit.js',
   'test-server-startup.js',
@@ -39,7 +41,15 @@ const runNextTest = () => {
     cwd: __dirname
   });
 
+  // A hung child (e.g. waiting on Neo4j) must not hang the suite.
+  const deadline = setTimeout(() => {
+    console.log(`⏰ ${testFile} exceeded ${TEST_TIMEOUT_MS / 1000}s; killing it`);
+    process.exitCode = 1;
+    testProcess.kill('SIGKILL');
+  }, TEST_TIMEOUT_MS);
+
   testProcess.on('close', (code) => {
+    clearTimeout(deadline);
     if (code === 0) {
       console.log(`✅ ${testFile} completed successfully`);
     } else {

@@ -40,7 +40,6 @@ function getModel(env: NodeJS.ProcessEnv, provider: Provider): string {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
-let requestTimeoutMs = DEFAULT_TIMEOUT_MS;
 
 /** REVERIE_EMBED_TIMEOUT_MS, whole milliseconds, clamped to 1s..120s. */
 function configuredTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -64,12 +63,13 @@ export function secureEndpoint(raw: string, name: string): string {
   return url.toString().replace(/\/$/, '');
 }
 
-async function fetchJson(url: string, init: RequestInit): Promise<any> {
+/** Credentials never follow a redirect (a cross-origin or https→http hop would leak them); every request is bounded by timeoutMs. */
+async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { ...init, signal: controller.signal, redirect: 'error' });
 
     if (!response.ok) {
       const body = (await response.text()).slice(0, 200);
@@ -116,7 +116,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
   }
 
   const model = getModel(env, provider);
-  requestTimeoutMs = configuredTimeoutMs(env);
+  const timeoutMs = configuredTimeoutMs(env);
 
   if (provider === 'local') {
     let extractorPromise: Promise<any> | null = null;
@@ -169,7 +169,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({ model, input: batch })
-          });
+          }, timeoutMs);
           return Array.isArray(data.data)
             ? data.data.map((item: { embedding: unknown }) => normalizeVector(item.embedding))
             : [];
@@ -208,7 +208,8 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({ model, input: batch })
-            }
+            },
+            timeoutMs
           );
 
           return Array.isArray(data.data)
@@ -220,18 +221,18 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
   }
 
   if (provider === 'ollama') {
-    const host = env.OLLAMA_HOST?.trim() || 'http://127.0.0.1:11434';
+    const host = secureEndpoint(env.OLLAMA_HOST?.trim() || 'http://127.0.0.1:11434', 'OLLAMA_HOST');
     return {
       id: `${provider}/${model}`,
       async embed(texts: string[]): Promise<number[][]> {
         return embedRemote(texts, async (batch) => {
-          const data = await fetchJson(`${host.replace(/\/$/, '')}/api/embed`, {
+          const data = await fetchJson(`${host}/api/embed`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({ model, input: batch })
-          });
+          }, timeoutMs);
 
           return Array.isArray(data.embeddings)
             ? data.embeddings.map((item: unknown) => normalizeVector(item))
@@ -257,7 +258,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({ model, input: batch })
-        });
+        }, timeoutMs);
 
         return Array.isArray(data.data)
           ? data.data.map((item: { embedding: unknown }) => normalizeVector(item.embedding))

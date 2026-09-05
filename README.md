@@ -65,7 +65,7 @@ Unlike traditional approaches that embed complex logic in tools, this server pro
 - **Maximum flexibility**: The LLM can implement any strategy without tool limitations
 
 ### Search Behavior
-`search_memories` is hybrid: keyword hits (any word of the query as a substring of any property) rank first, then semantic matches above a similarity threshold. See **Search** below.
+`search_memories` is hybrid: keyword hits (any word of the query as a substring of any searchable content property) rank first, then semantic matches above a similarity threshold. See **Search** below.
 
 This approach makes the system more powerful and adaptable, as improvements in LLM capabilities directly translate to better memory management.
 
@@ -73,7 +73,7 @@ This approach makes the system more powerful and adaptable, as improvements in L
 
 `search_memories` now supports three modes:
 - `hybrid` (default): keyword hits score `1`, then semantic matches add close variants such as `Benjamin Weeks` for `Ben Weeks`
-- `keyword`: preserves today's substring-style word matching across all properties
+- `keyword`: any word of the query as a substring of any searchable content property (timestamps, `status` and embedding fields are never matched)
 - `semantic`: uses embeddings only when available, with graceful fallback to keyword behavior if embeddings are unavailable
 
 Use `similarity_threshold` (default `0.4`, clamped to `0..1`) to control how strict semantic matches are. Results include `_score` and `_match` on each returned `memory` object so callers can explain why a memory was returned.
@@ -144,7 +144,7 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 
 ## Prerequisites
 
-1. **Neo4j Database** (v4.4+ or v5.x)
+1. **Neo4j Database** 5.9 or newer (the `dream` tool uses `COUNT {}` and `IS :: STRING`); APOC for duplicate merging
    - Install Neo4j Community or Enterprise Edition
    - Download from [neo4j.com/download](https://neo4j.com/download/)
    - Or use Docker: `docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j`

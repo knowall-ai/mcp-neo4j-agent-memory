@@ -1,3 +1,4 @@
+import { cypherIdentifier } from './types.js';
 import neo4j, { Driver, Integer, Node, QueryResult, Record as Neo4jRecord, Relationship, Session } from 'neo4j-driver';
 
 export interface Neo4jQueryParams {
@@ -123,11 +124,11 @@ export class Neo4jClient {
   }
 
   async getNodes(label: string): Promise<any[]> {
-    return this.executeQuery(`MATCH (n:${label}) RETURN n as memory`);
+    return this.executeQuery(`MATCH (n:${cypherIdentifier(label)}) RETURN n as memory`);
   }
 
   async createNode(label: string, properties: Neo4jQueryParams): Promise<any> {
-    const result = await this.executeQuery(`CREATE (n:${label} $props) RETURN n as memory`, { props: properties });
+    const result = await this.executeQuery(`CREATE (n:${cypherIdentifier(label)} $props) RETURN n as memory`, { props: properties });
     return result[0];
   }
 
@@ -135,7 +136,7 @@ export class Neo4jClient {
     const result = await this.executeQuery(
       `MATCH (a), (b)
        WHERE id(a) = $fromId AND id(b) = $toId
-       CREATE (a)-[r:${relationType} $props]->(b)
+       CREATE (a)-[r:${cypherIdentifier(relationType)} $props]->(b)
        RETURN r as relationship`,
       {
         fromId: neo4j.int(fromNodeId),
@@ -161,7 +162,7 @@ export class Neo4jClient {
 
   async updateRelationship(fromNodeId: number, toNodeId: number, relationType: string, properties: Neo4jQueryParams): Promise<any> {
     const result = await this.executeQuery(
-      `MATCH (a)-[r:${relationType}]->(b)
+      `MATCH (a)-[r:${cypherIdentifier(relationType)}]->(b)
        WHERE id(a) = $fromId AND id(b) = $toId
        SET r += $props
        RETURN r as relationship`,
@@ -188,7 +189,7 @@ export class Neo4jClient {
 
   async deleteRelationship(fromNodeId: number, toNodeId: number, relationType: string): Promise<any> {
     const result = await this.executeQuery(
-      `MATCH (a)-[r:${relationType}]->(b)
+      `MATCH (a)-[r:${cypherIdentifier(relationType)}]->(b)
        WHERE id(a) = $fromId AND id(b) = $toId
        DELETE r
        RETURN count(r) as deletedCount`,

@@ -3,7 +3,7 @@ import neo4j from 'neo4j-driver';
 import { Embedder, embedNodes, scrub } from '../embeddings.js';
 import { Neo4jClient } from '../neo4j-client.js';
 import { readOnlyViolation } from '../cypher-guard.js';
-import { bloatHint, contentKeys, factLikeKeys, maxProperties } from '../hygiene.js';
+import { bloatHint, contentKeys, factLikeKeys, lazyEmbedBatch, maxProperties } from '../hygiene.js';
 import { Candidate, Ranked, SearchMode, rank } from '../search.js';
 import {
   isCreateConnectionArgs,
@@ -106,7 +106,11 @@ export async function handleToolCall(
           baseQuery += ` WHERE ${conditions.join(' AND ')}`;
         }
 
-        baseQuery += ' RETURN id(memory) AS id, labels(memory)[0] AS label, properties(memory) AS props';
+        // Keyword mode never needs the stored vectors, so leave them out of the wire payload.
+        const propsProjection = requestedMode === 'keyword'
+          ? 'memory {.*, embedding: null, name_embedding: null}'
+          : 'properties(memory)';
+        baseQuery += ` RETURN id(memory) AS id, labels(memory)[0] AS label, ${propsProjection} AS props ORDER BY id(memory)`;
         const rawCandidates = await neo4jClient.executeQuery<SearchCandidate>(baseQuery, queryParams);
         const candidates = rawCandidates.map((candidate) => ({
           id: candidate.id,
@@ -394,8 +398,13 @@ export async function handleToolCall(
             skipped: []
           };
 
+          // The survivor absorbs the identity fields of everything merged into it, so later
+          // duplicates are compared against the accumulated set, not the pre-merge snapshot.
+          const keepIdentity: IdentityFields = { ...(identity.get(keep.id) ?? {}) };
+
           for (const duplicate of rest) {
-            const conflict = identityConflict(identity.get(keep.id), identity.get(duplicate.id));
+            const duplicateIdentity = identity.get(duplicate.id);
+            const conflict = identityConflict(keepIdentity, duplicateIdentity);
             if (conflict) {
               report.skipped.push({ id: duplicate.id, reason: `different ${conflict}` });
               continue;
@@ -423,6 +432,12 @@ export async function handleToolCall(
                 }
               );
             }
+            for (const key of IDENTITY_KEYS) {
+              const value = duplicateIdentity?.[key];
+              if (value !== undefined && keepIdentity[key] === undefined) {
+                keepIdentity[key] = value;
+              }
+            }
             report.merged.push(duplicate.id);
             merged += 1;
           }
@@ -432,19 +447,30 @@ export async function handleToolCall(
 
         let reembedded = 0;
         if (embedder) {
-          const nodesToEmbed = await neo4jClient.executeQuery<SearchCandidate>(
-            `MATCH (n)
-             WHERE n.embedding_model IS NULL OR n.embedding_model <> $model OR n.name_embedding IS NULL
-             RETURN id(n) AS id, labels(n)[0] AS label, properties(n) AS props
-             ORDER BY id(n)`,
-            { model: embedder.id }
-          );
-
+          const staleWhere = '(n.embedding_model IS NULL OR n.embedding_model <> $model OR n.name_embedding IS NULL)';
           if (dryRun) {
-            reembedded = nodesToEmbed.length;
-          } else if (nodesToEmbed.length > 0) {
-            for (let index = 0; index < nodesToEmbed.length; index += 50) {
-              const batch = nodesToEmbed.slice(index, index + 50).map((candidate) => ({
+            const [staleRow] = await neo4jClient.executeQuery<{ count: number }>(
+              `MATCH (n) WHERE ${staleWhere} RETURN count(n) AS count`,
+              { model: embedder.id }
+            );
+            reembedded = staleRow?.count ?? 0;
+          } else {
+            // Page through stale nodes by id so a large graph is never materialised at once, and
+            // leave the stored vectors out of the wire payload.
+            let cursor = -1;
+            for (;;) {
+              const page = await neo4jClient.executeQuery<SearchCandidate>(
+                `MATCH (n)
+                 WHERE id(n) > $cursor AND ${staleWhere}
+                 RETURN id(n) AS id, labels(n)[0] AS label, n {.*, embedding: null, name_embedding: null} AS props
+                 ORDER BY id(n) LIMIT 50`,
+                { model: embedder.id, cursor: neo4j.int(cursor) }
+              );
+              if (page.length === 0) {
+                break;
+              }
+              cursor = page[page.length - 1].id;
+              const batch = page.map((candidate) => ({
                 id: candidate.id,
                 label: candidate.label || 'Memory',
                 props: candidate.props || {}
@@ -453,7 +479,7 @@ export async function handleToolCall(
                 reembedded += await persistCandidateEmbeddings(neo4jClient, embedder, batch);
               } catch (error) {
                 console.error('Embedding unavailable for dream:', error);
-                notes.push(`re-embedding stopped after ${reembedded} of ${nodesToEmbed.length} nodes: ${error instanceof Error ? error.message : String(error)}`);
+                notes.push(`re-embedding stopped after ${reembedded} nodes: ${error instanceof Error ? error.message : String(error)}`);
                 break;
               }
             }
@@ -546,14 +572,18 @@ async function rankCandidates(
       effectiveMode = 'keyword';
     } else {
       try {
-        const lazyBatch = getLazyEmbedBatchSize();
+        const lazyBatch = lazyEmbedBatch();
         const candidatesToEmbed = candidates.filter((candidate) => needsEmbedding(candidate.props, embedder.id)).slice(0, lazyBatch);
 
         if (candidatesToEmbed.length > 0) {
           await persistCandidateEmbeddings(neo4jClient, embedder, candidatesToEmbed);
         }
 
-        [queryEmbedding] = await embedder.embed([trimmedQuery]);
+        const [vector] = await embedder.embed([trimmedQuery]);
+        if (!Array.isArray(vector) || vector.length === 0) {
+          throw new Error('Embedding provider returned no vector for the query');
+        }
+        queryEmbedding = vector;
       } catch (error) {
         console.error('Embedding unavailable for search_memories:', error);
         effectiveMode = 'keyword';
@@ -757,11 +787,6 @@ function jsonResult(value: unknown): CallToolResult {
 /** Stale when embedded by another model/provider, or before the name vector was introduced. */
 function needsEmbedding(props: Record<string, any>, modelId: string): boolean {
   return props.embedding_model !== modelId || !Array.isArray(props.name_embedding);
-}
-
-function getLazyEmbedBatchSize(): number {
-  const raw = Number.parseInt(process.env.REVERIE_LAZY_EMBED_BATCH ?? '100', 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : 100;
 }
 
 function toNodeProperties(memory: Record<string, any>): Record<string, unknown> {

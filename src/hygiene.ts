@@ -31,6 +31,19 @@ export function factLikeKeys(props: Record<string, unknown>): string[] {
   });
 }
 
+export const DEFAULT_LAZY_EMBED_BATCH = 100;
+export const MAX_LAZY_EMBED_BATCH = 1000;
+
+/** REVERIE_LAZY_EMBED_BATCH: stale candidates embedded per search; whole number 1..1000, else the default. */
+export function lazyEmbedBatch(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.REVERIE_LAZY_EMBED_BATCH ?? '').trim();
+  if (!/^\d+$/.test(raw)) {
+    return DEFAULT_LAZY_EMBED_BATCH;
+  }
+  const value = Number(raw);
+  return value >= 1 && value <= MAX_LAZY_EMBED_BATCH ? value : DEFAULT_LAZY_EMBED_BATCH;
+}
+
 export function bloatHint(name: string, count: number, limit: number): string {
   return `"${name}" now has ${count} properties (limit ${limit}). The graph maps entities and relationships; ` +
     'keep only durable attributes here. Fold dated facts and episodes into a short attribute, a relationship, ' +

@@ -67,6 +67,21 @@ export interface DreamArgs {
   dry_run?: boolean;
 }
 
+/** Labels and relationship types are interpolated into Cypher, so they must be plain identifiers. */
+export const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+
+export function isIdentifier(value: unknown): value is string {
+  return typeof value === 'string' && IDENTIFIER_RE.test(value);
+}
+
+/** Backtick-quote a validated identifier for use in Cypher. Throws on anything not validated. */
+export function cypherIdentifier(value: string): string {
+  if (!isIdentifier(value)) {
+    throw new Error(`Invalid Cypher identifier: ${JSON.stringify(value)}`);
+  }
+  return '`' + value + '`';
+}
+
 export const SEARCH_MAX_LIMIT = 200;
 export const SEARCH_MAX_DEPTH = 5;
 
@@ -82,8 +97,13 @@ function isIntegerInRange(value: unknown, min: number, max: number): boolean {
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
 }
 
+const isNodeId = (value: unknown): boolean => isIntegerInRange(value, 0, Number.MAX_SAFE_INTEGER);
+
 export function isCreateMemoryArgs(args: unknown): args is CreateMemoryArgs {
-  return typeof args === 'object' && args !== null && typeof (args as CreateMemoryArgs).label === 'string' && typeof (args as CreateMemoryArgs).properties === 'object';
+  return isPlainObject(args) &&
+    hasOnlyKeys(args, ['label', 'properties']) &&
+    isIdentifier(args.label) &&
+    isPlainObject(args.properties);
 }
 
 const SEARCH_KEYS = ['query', 'label', 'depth', 'order_by', 'limit', 'since_date', 'search_mode', 'similarity_threshold'] as const;
@@ -106,51 +126,40 @@ export function isSearchMemoriesArgs(args: unknown): args is SearchMemoriesArgs 
 }
 
 export function isCreateConnectionArgs(args: unknown): args is CreateConnectionArgs {
-  return (
-    typeof args === 'object' &&
-    args !== null &&
-    typeof (args as CreateConnectionArgs).fromMemoryId === 'number' &&
-    typeof (args as CreateConnectionArgs).toMemoryId === 'number' &&
-    typeof (args as CreateConnectionArgs).type === 'string'
-  );
+  return isPlainObject(args) &&
+    hasOnlyKeys(args, ['fromMemoryId', 'toMemoryId', 'type', 'properties']) &&
+    isNodeId(args.fromMemoryId) &&
+    isNodeId(args.toMemoryId) &&
+    isIdentifier(args.type) &&
+    (args.properties === undefined || isPlainObject(args.properties));
 }
 
 export function isUpdateMemoryArgs(args: unknown): args is UpdateMemoryArgs {
-  return (
-    typeof args === 'object' &&
-    args !== null &&
-    typeof (args as UpdateMemoryArgs).nodeId === 'number' &&
-    typeof (args as UpdateMemoryArgs).properties === 'object'
-  );
+  return isPlainObject(args) &&
+    hasOnlyKeys(args, ['nodeId', 'properties']) &&
+    isNodeId(args.nodeId) &&
+    isPlainObject(args.properties);
 }
 
 export function isUpdateConnectionArgs(args: unknown): args is UpdateConnectionArgs {
-  return (
-    typeof args === 'object' &&
-    args !== null &&
-    typeof (args as UpdateConnectionArgs).fromMemoryId === 'number' &&
-    typeof (args as UpdateConnectionArgs).toMemoryId === 'number' &&
-    typeof (args as UpdateConnectionArgs).type === 'string' &&
-    typeof (args as UpdateConnectionArgs).properties === 'object'
-  );
+  return isPlainObject(args) &&
+    hasOnlyKeys(args, ['fromMemoryId', 'toMemoryId', 'type', 'properties']) &&
+    isNodeId(args.fromMemoryId) &&
+    isNodeId(args.toMemoryId) &&
+    isIdentifier(args.type) &&
+    isPlainObject(args.properties);
 }
 
 export function isDeleteMemoryArgs(args: unknown): args is DeleteMemoryArgs {
-  return (
-    typeof args === 'object' &&
-    args !== null &&
-    typeof (args as DeleteMemoryArgs).nodeId === 'number'
-  );
+  return isPlainObject(args) && hasOnlyKeys(args, ['nodeId']) && isNodeId(args.nodeId);
 }
 
 export function isDeleteConnectionArgs(args: unknown): args is DeleteConnectionArgs {
-  return (
-    typeof args === 'object' &&
-    args !== null &&
-    typeof (args as DeleteConnectionArgs).fromMemoryId === 'number' &&
-    typeof (args as DeleteConnectionArgs).toMemoryId === 'number' &&
-    typeof (args as DeleteConnectionArgs).type === 'string'
-  );
+  return isPlainObject(args) &&
+    hasOnlyKeys(args, ['fromMemoryId', 'toMemoryId', 'type']) &&
+    isNodeId(args.fromMemoryId) &&
+    isNodeId(args.toMemoryId) &&
+    isIdentifier(args.type);
 }
 
 export function isListMemoryLabelsArgs(args: unknown): args is ListMemoryLabelsArgs {

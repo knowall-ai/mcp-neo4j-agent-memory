@@ -4,8 +4,9 @@ import assert from 'assert';
 import { cosine, createEmbedder, embeddingText, nameText, scrub } from '../build/embeddings.js';
 import { keywordMatches, rank } from '../build/search.js';
 import { contentKeys, factLikeKeys, maxProperties } from '../build/hygiene.js';
-import { readOnlyViolation } from '../build/cypher-guard.js';
-import { isDreamArgs, isMemoryStatsArgs, isQueryMemoriesArgs, isSearchMemoriesArgs } from '../build/types.js';
+import { readOnlyViolation, stripComments } from '../build/cypher-guard.js';
+import { cypherIdentifier, isCreateConnectionArgs, isCreateMemoryArgs, isDreamArgs, isMemoryStatsArgs, isQueryMemoriesArgs, isSearchMemoriesArgs } from '../build/types.js';
+import { lazyEmbedBatch } from '../build/hygiene.js';
 import { secureEndpoint } from '../build/embeddings.js';
 
 function approxEqual(actual, expected, epsilon = 1e-9) {
@@ -124,6 +125,28 @@ try {
   assert.ok(readOnlyViolation("CALL db.create.setNodeVectorProperty(n, 'embedding', [1.0])"));
   assert.ok(readOnlyViolation("CALL apoc.create.node(['X'], {}) YIELD node RETURN node"));
   assert.ok(readOnlyViolation('CALL { MATCH (n) RETURN n } RETURN 1'));
+  // comments cannot hide a procedure from the guard
+  assert.ok(readOnlyViolation("CALL /* hi */ apoc.load.json('http://169.254.169.254/') YIELD value RETURN value"));
+  assert.ok(readOnlyViolation("CALL // c\n apoc.create.node(['X'], {}) YIELD node RETURN node"));
+  assert.strictEqual(readOnlyViolation('CALL /* fine */ db.labels() YIELD label RETURN label'), null);
+  assert.strictEqual(stripComments('MATCH (n) // trailing\nRETURN n /* block */'), 'MATCH (n)  \nRETURN n  ');
+
+  // labels and relationship types are identifiers; anything else is rejected before it reaches Cypher
+  assert.strictEqual(isCreateMemoryArgs({ label: 'person', properties: { name: 'A' } }), true);
+  assert.strictEqual(isCreateMemoryArgs({ label: 'person) DETACH DELETE n //', properties: {} }), false);
+  assert.strictEqual(isCreateMemoryArgs({ label: 'person', properties: [] }), false);
+  assert.strictEqual(isCreateMemoryArgs({ label: 'person', properties: {}, extra: true }), false);
+  assert.strictEqual(isCreateConnectionArgs({ fromMemoryId: 1, toMemoryId: 2, type: 'WORKS_AT' }), true);
+  assert.strictEqual(isCreateConnectionArgs({ fromMemoryId: 1, toMemoryId: 2, type: 'X]->() DETACH DELETE' }), false);
+  assert.strictEqual(isCreateConnectionArgs({ fromMemoryId: 1.5, toMemoryId: 2, type: 'WORKS_AT' }), false);
+  assert.strictEqual(cypherIdentifier('Person'), '`Person`');
+  assert.throws(() => cypherIdentifier('Person`) DETACH DELETE n'));
+
+  assert.strictEqual(lazyEmbedBatch({}), 100);
+  assert.strictEqual(lazyEmbedBatch({ REVERIE_LAZY_EMBED_BATCH: '50' }), 50);
+  assert.strictEqual(lazyEmbedBatch({ REVERIE_LAZY_EMBED_BATCH: '50abc' }), 100);
+  assert.strictEqual(lazyEmbedBatch({ REVERIE_LAZY_EMBED_BATCH: '5000' }), 100);
+  assert.throws(() => secureEndpoint('http://ollama.example.com:11434', 'OLLAMA_HOST'));
 
   // argument validation rejects unknown keys and out-of-range numbers
   assert.strictEqual(isSearchMemoriesArgs({ query: 'x', limit: 5, depth: 2, similarity_threshold: 0.5 }), true);
