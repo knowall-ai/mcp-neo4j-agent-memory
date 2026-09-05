@@ -75,7 +75,7 @@ All proportions are relative, so the same recipe works at any size.
 | Element | Rule
 
 | Wordmark
-| Centred; width *53 %* of banner width (its natural size at 1536 px); top edge at y = 62 px on a 1024 px-tall banner.
+| Centred; width *53 %* of banner width (its natural size at 1536 px); top edge at 6 % of the banner height (62 px at 1024).
 
 | Subtitle
 | Exactly the *same width as the wordmark's ink* (the bounding box of the strokes, not the file or the glow halo); height *0.36 x* the ink height (squat and bold, stretched with Lanczos); placed *0.60 x* subtitle height below the ink's bottom edge.

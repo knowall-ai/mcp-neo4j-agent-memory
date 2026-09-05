@@ -56,7 +56,7 @@ def main() -> None:
     ap.add_argument("--font", type=Path, default=HERE / "fonts" / "Orbitron.ttf")
     ap.add_argument("--weight", type=int, default=800, help="Orbitron weight axis (800 = ExtraBold)")
     ap.add_argument("--wordmark-width", type=float, default=0.53, help="wordmark width as a fraction of the banner width")
-    ap.add_argument("--wordmark-top", type=int, default=62, help="y of the wordmark's top edge in pixels")
+    ap.add_argument("--wordmark-top", type=float, default=62 / 1024, help="wordmark top edge as a fraction of the banner height (62 px at 1024)")
     ap.add_argument("--subtitle-height", type=float, default=0.36, help="subtitle height as a fraction of wordmark height")
     ap.add_argument("--gap", type=float, default=0.60, help="gap below the wordmark as a fraction of subtitle height")
     ap.add_argument("--logo-width", type=float, default=0.11)
@@ -66,6 +66,7 @@ def main() -> None:
 
     bg = Image.open(args.backdrop).convert("RGB")
     W, H = bg.size
+    top = int(H * args.wordmark_top)
 
     word = Image.open(args.wordmark).convert("RGBA")
     ww = int(W * args.wordmark_width)
@@ -74,7 +75,7 @@ def main() -> None:
     # premultiply onto black so the screen blend only adds the lettering's own light
     word_rgb = Image.alpha_composite(Image.new("RGBA", word.size, (0, 0, 0, 255)), word).convert("RGB")
     wx = (W - ww) // 2
-    out = screen(bg, word_rgb, (wx, args.wordmark_top))
+    out = screen(bg, word_rgb, (wx, top))
 
     # The rules are relative to the lettering itself (its alpha bounding box), not the padded file.
     core = word.getchannel("A").point(lambda a: 255 if a > 160 else 0)  # the strokes, not their glow halo
@@ -83,7 +84,7 @@ def main() -> None:
     sub_h = int(letters_h * args.subtitle_height)
     sub = subtitle_layer(args.subtitle, letters_w, sub_h, args.font, args.weight)
     sx = wx + bx0
-    sy = args.wordmark_top + by1 + int(sub_h * args.gap)
+    sy = top + by1 + int(sub_h * args.gap)
     out = screen(out, sub, (sx - 40, sy - 40)).convert("RGBA")
 
     logo = Image.open(args.logo).convert("RGBA")
