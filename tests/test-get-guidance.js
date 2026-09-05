@@ -51,7 +51,7 @@ const testGetGuidance = () => {
                 break;
                 
               case 2: // Labels only
-                if (content && content.includes('person, place, organization')) {
+                if (content && content.includes('People & Living Things')) {
                   console.log('✅ Labels guidance test passed');
                   testsPassed++;
                 } else {
@@ -60,7 +60,7 @@ const testGetGuidance = () => {
                 break;
                 
               case 3: // Relationships only
-                if (content && content.includes('KNOWS, FRIENDS_WITH')) {
+                if (content && content.includes('Personal Relationships')) {
                   console.log('✅ Relationships guidance test passed');
                   testsPassed++;
                 } else {
@@ -69,7 +69,7 @@ const testGetGuidance = () => {
                 break;
                 
               case 4: // Best practices
-                if (content && content.includes('Use lowercase for labels')) {
+                if (content && content.includes('ALWAYS SEARCH FIRST')) {
                   console.log('✅ Best practices guidance test passed');
                   testsPassed++;
                 } else {
