@@ -8,7 +8,7 @@ import { tools } from './tools/definitions.js';
 import { Neo4jServerConfig } from './types.js';
 
 /** A misconfigured provider (missing key, http endpoint…) must not stop the server; search degrades to keyword. */
-function safeCreateEmbedder(): Embedder | null {
+export function safeCreateEmbedder(): Embedder | null {
   try {
     return createEmbedder();
   } catch (error) {
@@ -17,55 +17,38 @@ function safeCreateEmbedder(): Embedder | null {
   }
 }
 
+export const VERSION = '0.5.0';
+
+/** The MCP protocol server with Reverie's tools, bound to a (possibly absent) Neo4j client and embedder. */
+export function createMcpServer(neo4j: Neo4jClient | null, embedder: Embedder | null): Server {
+  const server = new Server({ name: 'reverie', version: VERSION }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (!neo4j) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Neo4j connection not configured. Please set NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD environment variables.',
+          },
+        ],
+        isError: true,
+      };
+    }
+    const { name, arguments: args } = request.params;
+    return handleToolCall(name, args, neo4j, embedder);
+  });
+  server.onerror = (error) => console.error('[MCP Error]', error);
+  return server;
+}
+
 export class Neo4jServer {
   private server: Server;
   private neo4j: Neo4jClient | null;
-  private embedder: Embedder | null;
 
   constructor(config?: Neo4jServerConfig) {
-    this.server = new Server(
-      {
-        name: 'reverie',
-        version: '0.4.0',
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
-
     this.neo4j = config ? new Neo4jClient(config.uri, config.username, config.password, config.database) : null;
-    this.embedder = config ? safeCreateEmbedder() : null;
-    this.setupToolHandlers();
-
-    this.server.onerror = (error) => console.error('[MCP Error]', error);
-    process.on('SIGINT', async () => {
-      await this.close();
-      process.exit(0);
-    });
-  }
-
-  private setupToolHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools,
-    }));
-
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      if (!this.neo4j) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: 'Neo4j connection not configured. Please set NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD environment variables.',
-            },
-          ],
-          isError: true,
-        };
-      }
-      const { name, arguments: args } = request.params;
-      return handleToolCall(name, args, this.neo4j, this.embedder);
-    });
+    this.server = createMcpServer(this.neo4j, config ? safeCreateEmbedder() : null);
   }
 
   async run(): Promise<void> {

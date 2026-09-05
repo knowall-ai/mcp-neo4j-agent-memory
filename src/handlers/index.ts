@@ -3,6 +3,7 @@ import neo4j from 'neo4j-driver';
 import { Embedder, embedNodes, scrub } from '../embeddings.js';
 import { Neo4jClient } from '../neo4j-client.js';
 import { readOnlyViolation } from '../cypher-guard.js';
+import { emit } from '../events.js';
 import { bloatHint, contentKeys, factLikeKeys, lazyEmbedBatch, maxProperties } from '../hygiene.js';
 import { Candidate, Ranked, SearchMode, rank } from '../search.js';
 import {
@@ -66,6 +67,7 @@ export async function handleToolCall(
   neo4jClient: Neo4jClient,
   embedder: Embedder | null
 ): Promise<CallToolResult> {
+  let activeDream: string | null = null;
   try {
     switch (name) {
       case 'search_memories': {
@@ -127,6 +129,7 @@ export async function handleToolCall(
         const rankedIds = topRanked.map((item) => item.id);
 
         if (rankedIds.length === 0) {
+          emit('recall', { ids: [], names: [], terms: searchTerms(query) });
           return jsonResult([]);
         }
 
@@ -154,6 +157,11 @@ export async function handleToolCall(
               .map((id) => result.find((row) => row?.memory?._id === id))
               .filter((row): row is Record<string, any> => Boolean(row));
 
+        emit('recall', {
+          ids: orderedResult.map((row) => String(row.memory._id)),
+          names: orderedResult.map((row) => (typeof row.memory?.name === 'string' ? row.memory.name : null)),
+          terms: searchTerms(query)
+        });
         return jsonResult(orderedResult);
       }
 
@@ -169,6 +177,7 @@ export async function handleToolCall(
 
         const result = await neo4jClient.createNode(args.label, properties);
         await embedNodeIfPossible(neo4jClient, embedder, result?.memory, args.label, 'create_memory');
+        emitRemember(result?.memory, args.label);
         return jsonResult(result);
       }
 
@@ -184,6 +193,7 @@ export async function handleToolCall(
           args.properties || { created_at: new Date().toISOString() }
         );
 
+        emit('connect', { ids: [String(args.fromMemoryId), String(args.toMemoryId)], type: args.type });
         return jsonResult(result);
       }
 
@@ -205,6 +215,7 @@ export async function handleToolCall(
             result.memory._hint = bloatHint(String(result.memory.name ?? args.nodeId), count, limit);
           }
         }
+        emitRemember(result?.memory, label);
         return jsonResult(result);
       }
 
@@ -214,6 +225,7 @@ export async function handleToolCall(
         }
 
         const result = await neo4jClient.updateRelationship(args.fromMemoryId, args.toMemoryId, args.type, args.properties);
+        emit('connect', { ids: [String(args.fromMemoryId), String(args.toMemoryId)], type: args.type });
         return jsonResult(result);
       }
 
@@ -223,6 +235,7 @@ export async function handleToolCall(
         }
 
         const result = await neo4jClient.deleteNode(args.nodeId);
+        emit('forget', { id: String(args.nodeId) });
         return jsonResult(result);
       }
 
@@ -232,6 +245,7 @@ export async function handleToolCall(
         }
 
         const result = await neo4jClient.deleteRelationship(args.fromMemoryId, args.toMemoryId, args.type);
+        emit('forget', { ids: [String(args.fromMemoryId), String(args.toMemoryId)], type: args.type });
         return jsonResult(result);
       }
 
@@ -333,6 +347,11 @@ export async function handleToolCall(
 
         const dryRun = args.dry_run ?? false;
         const notes: string[] = [];
+        const dreamName = `dream-${new Date().toISOString().replace(/[-:]/g, '').replace(/T(\d{4}).*$/, '-$1')}`;
+        if (!dryRun) {
+          emit('dream.start', { name: dreamName });
+          activeDream = dreamName;
+        }
 
         const labelRows = await neo4jClient.executeQuery<{ label: string }>('CALL db.labels() YIELD label RETURN label ORDER BY label');
         let relabelled = 0;
@@ -514,6 +533,10 @@ export async function handleToolCall(
           notes.push(`${bloated.length} node(s) exceed ${maxProperties()} properties; split their fact-like keys into their own memories (see bloated)`);
         }
 
+        if (!dryRun) {
+          emit('dream.end', { name: dreamName, relabelled, merged, reembedded });
+          activeDream = null;
+        }
         return jsonResult({
           dry_run: dryRun,
           relabelled,
@@ -547,6 +570,9 @@ export async function handleToolCall(
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
   } catch (error) {
+    if (activeDream) {
+      emit('dream.end', { name: activeDream, failed: true });
+    }
     console.error('Error executing tool:', error);
     return {
       content: [
@@ -779,6 +805,16 @@ async function findBloatedNodes(neo4jClient: Neo4jClient, limit: number): Promis
     .filter((node) => node.properties > limit)
     .sort((left, right) => right.properties - left.properties)
     .slice(0, 20);
+}
+
+function searchTerms(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 10);
+}
+
+function emitRemember(memory: Record<string, any> | undefined, label: string): void {
+  if (memory && typeof memory._id === 'number') {
+    emit('remember', { id: String(memory._id), name: typeof memory.name === 'string' ? memory.name : null, label });
+  }
 }
 
 function jsonResult(value: unknown): CallToolResult {

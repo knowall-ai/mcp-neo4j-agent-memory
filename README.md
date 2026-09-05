@@ -523,6 +523,81 @@ The inspector provides a web UI to:
 - Validate your Neo4j connection
 - Debug tool parameters and responses
 
+## HTTP mode (`reverie serve`)
+
+`reverie` on its own is the stdio MCP server. `reverie serve` runs the same server over
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
+and adds a read-only **Brain API** that the [KnowAll Agents Portal](https://github.com/knowall-ai/agents-portal)
+Brain tab uses to draw the graph live. One bearer token protects both; only the health check is open.
+
+```bash
+REVERIE_SERVE_TOKEN=$(openssl rand -hex 24) NEO4J_PASSWORD=… reverie serve
+# Reverie HTTP server listening on http://127.0.0.1:8643
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REVERIE_SERVE_TOKEN` | (required) | Bearer token clients must send as `Authorization: Bearer …` |
+| `REVERIE_HTTP_HOST` / `REVERIE_HTTP_PORT` | `127.0.0.1` / `8643` | Bind address; keep it on loopback behind a reverse proxy |
+| `REVERIE_ALLOWED_ORIGINS` | none | Comma-separated browser origins allowed to call the API (they get CORS headers and preflight answers); requests carrying any other `Origin` header get 403. Server-to-server clients send no Origin and need nothing here |
+| `REVERIE_EVENTS_PATH` | `~/.reverie/events.jsonl` | Activation log (see below); empty string disables it |
+| `REVERIE_DREAMS_DIR` | unset | Optional dream diary folder (`*.md`); the newest file names the last dream |
+| `REVERIE_USAGE_STATS_PATH` / `REVERIE_BOOST_STATE_PATH` | `~/call-transcripts/usage-stats.json` / `boost-state.json` | Presence HUD files passed through in `state` (usage only when written within 15 min) |
+| `REVERIE_GRAPH_POLL_SECONDS` / `REVERIE_STATE_SECONDS` / `REVERIE_EVENT_POLL_SECONDS` | `5` / `5` / `1` | How often the event stream re-reads the graph, host state and activation log |
+
+`NEO4J_*` and `REVERIE_EMBEDDINGS` work exactly as in stdio mode.
+
+| Endpoint | Auth | Returns |
+|---|---|---|
+| `GET /health` (alias `/brain/health`) | none | `{ ok, neo4j, ts }` |
+| `POST /mcp` | bearer | MCP Streamable HTTP (stateless; JSON responses). Any MCP client that speaks Streamable HTTP can use it |
+| `GET /brain/graph?limit=400` | bearer | The most connected / most recent nodes (`limit` ≤ 1500), the relationships among them, totals per label and relationship type, and `state` |
+| `GET /brain/state` | bearer | `dreaming`, `lastActivityAt`, `lastDreamAt`, recent read/write counts, host CPU / load / memory, Presence `usage` and `boost` |
+| `GET /brain/events?limit=400` | bearer | Server-Sent Events: the last 30 `activation` events, then `state`; afterwards every new `activation` as it happens, a `graph` diff (`nodesAdded`, `nodesUpdated`, `nodesRemoved`, `relsAdded`, `relsRemoved`, `stats`) whenever the graph changed, `state` every few seconds and `error` if a poll fails |
+
+Node ids in the Brain API are the same numeric ids the tools return, as strings, so activation
+events and snapshot nodes line up. Archived memories are never shown. Embedding vectors never leave
+the server.
+
+**Activation log.** Every `search_memories` (`recall`), `create_memory` / `update_memory`
+(`remember`), `create_connection` / `update_connection` (`connect`), `delete_*` (`forget`) and real
+`dream` run (`dream.start` / `dream.end`) appends one JSON line to `REVERIE_EVENTS_PATH`, whichever
+transport served it. It holds ids, names and search terms only, is private to the user (mode 0600), is capped at
+5 MB / 5,000 lines, and is what makes the Brain view light up. The graph itself never records what was looked at.
+
+Behind Caddy on an agent's VM:
+
+```caddyfile
+agent.example.com {
+    # … the agent's other routes …
+    handle /reverie/* {
+        uri strip_prefix /reverie
+        reverse_proxy 127.0.0.1:8643
+    }
+}
+```
+
+and as a service:
+
+```ini
+[Unit]
+Description=Reverie graph memory (HTTP mode)
+After=network-online.target
+
+[Service]
+User=agent
+EnvironmentFile=/home/agent/.config/reverie.env   # NEO4J_*, REVERIE_SERVE_TOKEN, REVERIE_EMBEDDINGS…
+ExecStart=/usr/bin/reverie serve
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Give the portal `https://<agent host>/reverie` as the agent's `brainUrl` and the same token as
+`REVERIE_TOKEN`.
+
 ## License
 
 MIT
