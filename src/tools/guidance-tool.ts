@@ -139,6 +139,14 @@ Use UPPERCASE for relationship types:
 - 'created_at' is automatic if not provided
 - IMMEDIATELY after creating, connect it to related memories
 
+**What belongs in the graph**
+- The graph is a map of entities and how they relate: people, organisations, projects, products, places, animals, concepts. It is not a notebook
+- A property is a durable attribute of an entity: email, role, phone, website, birthday, a preference you'd still want next year
+- Episodes (a call, an email thread, a day's events) mostly belong in your notes or diary. Store in the graph only what they taught you about an entity or a relationship, kept short
+- Prefer a relationship over a property when the fact is about two entities: Ben -[USES {note: "camera on, wants fixes verified"}]-> Teams calls, rather than a paragraph on Ben
+- Make an episode its own memory (e.g. meeting, decision) only when the episode itself is something you'll need to find again
+- A node with dozens of properties is a smell: update_memory returns a _hint past the limit, and dream lists such nodes under "bloated". When you sleep, fold each fact-like key into a short attribute, a relationship, or your notes, then remove it
+
 **Building Connections**
 - After creating any memory, ask: "What existing memories relate to this?"
 - Create connections for: people→organizations, people→projects, people→skills
@@ -147,6 +155,10 @@ Use UPPERCASE for relationship types:
 
 **Searching**
 - Empty query string returns all memories
+- Use search_mode: "hybrid" (the default) to return keyword matches first, then semantic matches above the threshold
+- Use search_mode: "keyword" to match any word of the query as a substring of any searchable content property (not timestamps, status or embedding fields), or search_mode: "semantic" for meaning-first recall
+- Lower similarity_threshold (for example 0.35) to widen semantic matches, or raise it (for example 0.7) to be stricter
+- Results include _score and _match so you can explain why something was returned
 - Use label parameter to filter by type
 - Increase depth to include more relationships (depth=2 or 3 for rich context)
 - Default limit is 10, max is 200

@@ -87,7 +87,7 @@ const testSearchMemories = () => {
         name: 'search_memories',
         arguments: {
           query: test.query,
-          type: test.type,
+          label: test.type,
           depth: test.depth,
           limit: test.limit
         }
