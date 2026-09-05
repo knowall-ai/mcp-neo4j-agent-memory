@@ -1,0 +1,70 @@
+name: Integration
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Integration & coverage
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/reverie-ci-password
+          NEO4J_PLUGINS: '["apoc"]'
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NEO4J_URI: bolt://127.0.0.1:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: reverie-ci-password
+      REVERIE_EMBEDDINGS: local
+      REVERIE_TEST_DESTRUCTIVE: '1'
+      REVERIE_MODEL_CACHE: ${{ github.workspace }}/.hf-cache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache the local embedding model
+        uses: actions/cache@v4
+        with:
+          path: .hf-cache
+          key: minilm-l6-v2-q8
+      - run: npm ci
+      - run: npm run build
+      - name: Wait for authenticated Bolt (bounded)
+        run: |
+          node -e '
+            const neo4j = require("neo4j-driver");
+            const d = neo4j.driver(process.env.NEO4J_URI, neo4j.auth.basic(process.env.NEO4J_USERNAME, process.env.NEO4J_PASSWORD));
+            const started = Date.now();
+            (async function loop() {
+              try { await d.verifyConnectivity(); console.log("bolt ready"); await d.close(); }
+              catch (e) { if (Date.now() - started > 90000) { console.error("bolt not ready:", e.message); process.exit(1); } setTimeout(loop, 2000); }
+            })();
+          '
+      - name: Unit, startup and integration tests with a coverage gate
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          if-no-files-found: ignore

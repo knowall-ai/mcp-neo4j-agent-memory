@@ -473,11 +473,31 @@ Remember: A memory without connections is like a book in a library with no catal
 
 ## Testing
 
-Run the test suite:
+```bash
+npm run build              # TypeScript → build/
+npm run test:unit          # pure-module unit tests + server startup checks, no database needed
+npm run test:integration   # drives the built server over stdio against a live Neo4j
+npm run test:coverage      # everything under c8 with a coverage gate (70% lines and functions)
+```
+
+The integration tests need a Neo4j 5 with APOC and **wipe the database they point at**, so give
+them a disposable one:
 
 ```bash
-npm test
+docker run -d --rm --name reverie-test-neo4j -p 17687:7687 \
+  -e NEO4J_AUTH=neo4j/test-password -e NEO4J_PLUGINS='["apoc"]' neo4j:5-community
+NEO4J_URI=bolt://127.0.0.1:17687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=test-password \
+  REVERIE_TEST_DESTRUCTIVE=1 npm run test:coverage
 ```
+
+`REVERIE_TEST_DESTRUCTIVE=1` is the explicit opt-in: without it the suite refuses to run. With it,
+the suite wipes whatever `NEO4J_URI` points at, so only set it alongside a disposable database.
+The suite waits up to a minute for authenticated Bolt before starting, and a remote `NEO4J_URI`
+must use `bolt+s://` or `neo4j+s://` with a validated certificate (`+ssc` is refused).
+
+CI runs the same suite against a Neo4j service container on every pull request and fails the
+build if coverage drops below the gate. The first semantic search downloads the local embedding
+model (about 23 MB); CI caches it.
 
 ### Interactive Testing with MCP Inspector
 
