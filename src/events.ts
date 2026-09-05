@@ -15,8 +15,10 @@ export interface ActivationEvent {
   /** epoch seconds */
   ts: number;
   kind: string;
-  /** strictly increasing per log file, assigned under the append lock; the delivery cursor */
+  /** strictly increasing per log generation, assigned under the append lock; the delivery cursor */
   seq?: number;
+  /** identifies one life of the log file: a deleted and recreated log starts a new generation */
+  gen?: number;
   [key: string]: unknown;
 }
 
@@ -58,8 +60,9 @@ export function emit(kind: string, data: Record<string, unknown> = {}, env: Node
     const append = () => {
       // The sequence number is assigned under the lock, so it is strictly increasing in append
       // order whatever the wall clock says; readers use it as their delivery cursor.
-      const { lines, lastSeq } = readLog(file);
+      const { lines, lastSeq, gen } = readLog(file);
       record.seq = lastSeq + 1;
+      record.gen = gen;
       fs.appendFileSync(file, JSON.stringify(record) + '\n', { encoding: 'utf8', mode: 0o600 });
       ensurePrivate(file);
       // Both caps are checked on every append, so the log never holds more than MAX_LINES lines
@@ -92,13 +95,13 @@ function ensurePrivate(file: string): void {
   }
 }
 
-/** Line count and the last record's seq, from one read of the file (~1 ms for a ≤5 MB log). */
-function readLog(file: string): { lines: number; lastSeq: number } {
+/** Line count, the last record's seq and the log's generation, from one read of the file (~1 ms for a ≤5 MB log). */
+function readLog(file: string): { lines: number; lastSeq: number; gen: number } {
   let buffer: Buffer;
   try {
     buffer = fs.readFileSync(file);
   } catch {
-    return { lines: 0, lastSeq: 0 };
+    return { lines: 0, lastSeq: 0, gen: newGeneration() };
   }
   let lines = 0;
   let lastStart = 0;
@@ -111,7 +114,16 @@ function readLog(file: string): { lines: number; lastSeq: number } {
     }
   }
   const last = parseLine(buffer.subarray(lastStart).toString('utf8'));
-  return { lines, lastSeq: typeof last?.seq === 'number' ? last.seq : 0 };
+  return {
+    lines,
+    lastSeq: typeof last?.seq === 'number' ? last.seq : 0,
+    gen: typeof last?.gen === 'number' ? last.gen : newGeneration()
+  };
+}
+
+/** A fresh generation id: the wall clock in microseconds, distinct across recreations and processes for practical purposes. */
+function newGeneration(): number {
+  return Number(process.hrtime.bigint() / 1000n) + Date.now() * 1000;
 }
 
 function sleepMs(ms: number): void {
@@ -147,12 +159,19 @@ function withLock(file: string, fn: () => void): boolean {
         return false;
       }
       try {
-        const owner = Number.parseInt(fs.readFileSync(lock, 'utf8').trim().split(' ')[0], 10);
+        const observed = fs.readFileSync(lock, 'utf8');
+        const owner = Number.parseInt(observed.trim().split(' ')[0], 10);
         const age = Date.now() - fs.statSync(lock).mtimeMs;
         if ((Number.isInteger(owner) && !processAlive(owner)) || age > LOCK_STALE_MS) {
-          const stale = `${lock}.stale.${process.pid}.${Date.now()}`;
+          const stale = `${lock}.stale.${process.pid}.${process.hrtime.bigint()}`;
           fs.renameSync(lock, stale); // fails for all but one contender
-          fs.unlinkSync(stale);
+          if (fs.readFileSync(stale, 'utf8') === observed) {
+            fs.unlinkSync(stale); // it was the dead lock we saw: reclaimed
+          } else {
+            // Another contender reclaimed first and a new owner took the path in between: give
+            // the live lock back untouched and keep waiting.
+            fs.renameSync(stale, lock);
+          }
           continue;
         }
       } catch {
@@ -215,9 +234,11 @@ export interface LogCursor {
   ino: number | null;
   /** seq of the newest event delivered, so a re-read of a rewritten file skips what was already sent */
   lastSeq: number;
+  /** generation the seq belongs to; a different generation means a recreated log, delivered in full */
+  gen: number | null;
 }
 
-export const START_CURSOR: LogCursor = { offset: 0, ino: null, lastSeq: 0 };
+export const START_CURSOR: LogCursor = { offset: 0, ino: null, lastSeq: 0, gen: null };
 
 /**
  * Events appended since `cursor`, and the advanced cursor. Survives trims (the file is replaced,
@@ -242,7 +263,7 @@ function readSinceUnsafe(file: string, cursor: LogCursor): { events: ActivationE
     const replaced = cursor.ino !== null && stat.ino !== cursor.ino;
     const start = replaced || stat.size < cursor.offset ? 0 : cursor.offset;
     if (stat.size === start) {
-      return { events: [], cursor: { offset: start, ino: stat.ino, lastSeq: cursor.lastSeq } };
+      return { events: [], cursor: { ...cursor, offset: start, ino: stat.ino } };
     }
     const buffer = Buffer.alloc(stat.size - start);
     fs.readSync(fd, buffer, 0, buffer.length, start);
@@ -251,13 +272,22 @@ function readSinceUnsafe(file: string, cursor: LogCursor): { events: ActivationE
     const complete = text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1);
     const all = complete.split('\n').map(parseLine).filter((event): event is ActivationEvent => event !== null);
     const seqOf = (event: ActivationEvent) => (typeof event.seq === 'number' ? event.seq : 0);
-    const maxSeq = all.reduce((max, event) => Math.max(max, seqOf(event)), 0);
-    // Re-reading a rewritten file from the start: skip what was already delivered, unless the
-    // numbering restarted (the log was deleted and recreated), in which case everything is new.
-    const restarted = maxSeq < cursor.lastSeq;
-    const events = start === 0 && cursor.lastSeq > 0 && !restarted ? all.filter((event) => seqOf(event) > cursor.lastSeq) : all;
-    const lastSeq = restarted ? maxSeq : Math.max(cursor.lastSeq, maxSeq);
-    return { events, cursor: { offset: start + Buffer.byteLength(complete, 'utf8'), ino: stat.ino, lastSeq } };
+    const genOf = (event: ActivationEvent) => (typeof event.gen === 'number' ? event.gen : null);
+    // Re-reading a rewritten file from the start: skip what was already delivered from the same
+    // generation. A different generation is a deleted-and-recreated log: everything in it is new,
+    // whatever its sequence numbers happen to be.
+    const events =
+      start === 0 && cursor.lastSeq > 0
+        ? all.filter((event) => genOf(event) !== cursor.gen || seqOf(event) > cursor.lastSeq)
+        : all;
+    const newest = events.length > 0 ? events[events.length - 1] : null;
+    const next: LogCursor = {
+      offset: start + Buffer.byteLength(complete, 'utf8'),
+      ino: stat.ino,
+      lastSeq: newest ? seqOf(newest) : cursor.lastSeq,
+      gen: newest ? genOf(newest) : cursor.gen
+    };
+    return { events, cursor: next };
   } finally {
     fs.closeSync(fd);
   }

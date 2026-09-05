@@ -214,6 +214,7 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     assert.strictEqual(first.length, 2);
     assert.strictEqual(first[0].kind, 'recall');
     assert.deepStrictEqual(first.map((e) => e.seq), [1, 2], 'seq assigned in append order');
+    assert.ok(typeof first[0].gen === 'number' && first[0].gen === first[1].gen, 'both records share the log generation');
     assert.ok(typeof first[0].ts === 'number' && first[0].ts > 1.7e9 && first[0].ts < 1e12, 'ts is epoch seconds');
     assert.deepStrictEqual(tail(file, 1).map((e) => e.kind), ['remember'], 'tail keeps the newest');
     const since = readSince(file, START_CURSOR);
@@ -228,7 +229,8 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     // a trim replaces the file (new inode): re-read from the start but skip what was already
     // delivered, by seq rather than by wall clock (equal and out-of-order timestamps included)
     const t0 = 1_800_000_000;
-    const rec = (seq, ts) => JSON.stringify({ kind: 'recall', seq, ts });
+    const G = 7_000_000;
+    const rec = (seq, ts, gen = G) => JSON.stringify({ kind: 'recall', seq, ts, gen });
     fs.writeFileSync(file, [rec(10, t0 + 5), rec(11, t0 + 5), rec(12, t0 + 4), rec(13, t0 + 6)].join('\n') + '\n');
     const before = readSince(file, START_CURSOR);
     assert.strictEqual(before.events.length, 4);
@@ -243,13 +245,23 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     fs.writeFileSync(smaller, [rec(16, t0 + 7), rec(17, t0 + 7), rec(18, t0 + 1)].join('\n') + '\n');
     fs.renameSync(smaller, file);
     assert.deepStrictEqual(readSince(file, after.cursor).events.map((e) => e.seq), [18], 'a shrunk replacement is not replayed either');
-    const recreated = `${file}.fresh`;
-    fs.writeFileSync(recreated, [rec(1, t0 + 9), rec(2, t0 + 9)].join('\n') + '\n');
-    fs.renameSync(recreated, file);
-    const fresh = readSince(file, { offset: 0, ino: null, lastSeq: 18 });
-    assert.deepStrictEqual(fresh.events.map((e) => e.seq), [1, 2], 'a log whose numbering restarted is delivered in full');
-    assert.strictEqual(fresh.cursor.lastSeq, 2);
-    assert.deepStrictEqual(readSince(path.join(dir, 'missing.jsonl'), { offset: 5, ino: 1, lastSeq: 0 }), { events: [], cursor: { offset: 0, ino: null, lastSeq: 0 } });
+    // a deleted-and-recreated log is a new generation: delivered in full even when its new
+    // sequence numbers equal or pass the old cursor
+    for (const count of [2, 18, 19, 25]) {
+      const recreated = `${file}.fresh`;
+      fs.writeFileSync(recreated, Array.from({ length: count }, (_, i) => rec(i + 1, t0 + 9, G + 1)).join('\n') + '\n');
+      fs.renameSync(recreated, file);
+      const fresh = readSince(file, { offset: 0, ino: null, lastSeq: 18, gen: G });
+      assert.strictEqual(fresh.events.length, count, `new generation with ${count} records is delivered in full`);
+      assert.deepStrictEqual([fresh.cursor.lastSeq, fresh.cursor.gen], [count, G + 1]);
+    }
+    // an emit onto a recreated (empty) log starts a fresh generation with seq 1
+    fs.unlinkSync(file);
+    emit('recall', { again: true }, env);
+    const restarted = tail(file);
+    assert.strictEqual(restarted[0].seq, 1);
+    assert.notStrictEqual(restarted[0].gen, G);
+    assert.deepStrictEqual(readSince(path.join(dir, 'missing.jsonl'), { offset: 5, ino: 1, lastSeq: 0, gen: null }), { events: [], cursor: { offset: 0, ino: null, lastSeq: 0, gen: null } });
     assert.deepStrictEqual(tail(path.join(dir, 'missing.jsonl')), []);
     emit('noop', {}, { REVERIE_EVENTS_PATH: '' });
     // trimming: exceed MAX_BYTES with padded events, then the file must hold at most 5000 lines
@@ -424,7 +436,7 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.match(neo4jConfigError({ NEO4J_URI: 'bolt://x', NEO4J_USERNAME: 'neo4j', NEO4J_PASSWORD: '  ' }), /NEO4J_PASSWORD/);
   assert.match(neo4jConfigError({ NEO4J_PASSWORD: 'p' }), /NEO4J_URI/);
   assert.match(neo4jConfigError({ NEO4J_URI: 'bolt://x', NEO4J_PASSWORD: 'p' }), /NEO4J_USERNAME/);
-  assert.deepStrictEqual(readSince(path.join(os.tmpdir(), 'reverie-no-such-dir', 'x', 'events.jsonl'), START_CURSOR), { events: [], cursor: { offset: 0, ino: null, lastSeq: 0 } }, 'unreadable path is empty, not an error');
+  assert.deepStrictEqual(readSince(path.join(os.tmpdir(), 'reverie-no-such-dir', 'x', 'events.jsonl'), START_CURSOR), { events: [], cursor: { offset: 0, ino: null, lastSeq: 0, gen: null } }, 'unreadable path is empty, not an error');
   assert.deepStrictEqual(tail(path.join(os.tmpdir(), 'reverie-no-such-dir', 'x', 'events.jsonl')), []);
 
   // ---- bearer auth
