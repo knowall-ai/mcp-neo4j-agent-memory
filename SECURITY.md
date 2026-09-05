@@ -10,7 +10,7 @@ report anything you find, and please do it privately.
 
 - Preferred: use GitHub's private vulnerability reporting on this repository
   (**Security → Report a vulnerability**). It creates a private advisory only maintainers can see.
-- Otherwise: email **security@knowall.ai**. If you need to encrypt, say so in a first message and
+- Otherwise: email **support@knowall.ai**. If you need to encrypt, say so in a first message and
   we will send a key.
 
 Include what you can: the version or commit, the component (MCP server, Hermes plugin, brain
