@@ -15,6 +15,8 @@ export interface ActivationEvent {
   /** epoch seconds */
   ts: number;
   kind: string;
+  /** strictly increasing per log file, assigned under the append lock; the delivery cursor */
+  seq?: number;
   [key: string]: unknown;
 }
 
@@ -22,6 +24,7 @@ export const MAX_BYTES = 5 * 1024 * 1024;
 export const MAX_LINES = 5000;
 export const MAX_RECORD_BYTES = 64 * 1024;
 const LOCK_STALE_MS = 60_000;
+// (lock tokens are `pid hrtime`; stale locks are reclaimed by rename so only one contender wins)
 const LOCK_WAIT_MS = 2_000;
 
 let warned = false;
@@ -47,18 +50,21 @@ export function emit(kind: string, data: Record<string, unknown> = {}, env: Node
   }
   try {
     const record: ActivationEvent = { ts: Date.now() / 1000, kind, ...data };
-    const line = JSON.stringify(record) + '\n';
-    if (Buffer.byteLength(line, 'utf8') > MAX_RECORD_BYTES) {
+    if (Buffer.byteLength(JSON.stringify(record), 'utf8') > MAX_RECORD_BYTES) {
       return; // one runaway record must not blow the log's budget
     }
     // The log names what the agent knows, so it is private to the user (0700 dir, 0600 file).
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     const append = () => {
-      fs.appendFileSync(file, line, { encoding: 'utf8', mode: 0o600 });
+      // The sequence number is assigned under the lock, so it is strictly increasing in append
+      // order whatever the wall clock says; readers use it as their delivery cursor.
+      const { lines, lastSeq } = readLog(file);
+      record.seq = lastSeq + 1;
+      fs.appendFileSync(file, JSON.stringify(record) + '\n', { encoding: 'utf8', mode: 0o600 });
       ensurePrivate(file);
-      // Both caps are checked on every append (a newline count over a ≤5 MB file is ~1 ms), so
-      // the log never holds more than MAX_LINES lines or MAX_BYTES bytes after a write returns.
-      if (fs.statSync(file).size > MAX_BYTES || countLines(file) > MAX_LINES) {
+      // Both caps are checked on every append, so the log never holds more than MAX_LINES lines
+      // or MAX_BYTES bytes after a write returns.
+      if (lines + 1 > MAX_LINES || fs.statSync(file).size > MAX_BYTES) {
         trim(file);
       }
     };
@@ -86,15 +92,26 @@ function ensurePrivate(file: string): void {
   }
 }
 
-function countLines(file: string): number {
-  const buffer = fs.readFileSync(file);
-  let count = 0;
+/** Line count and the last record's seq, from one read of the file (~1 ms for a ≤5 MB log). */
+function readLog(file: string): { lines: number; lastSeq: number } {
+  let buffer: Buffer;
+  try {
+    buffer = fs.readFileSync(file);
+  } catch {
+    return { lines: 0, lastSeq: 0 };
+  }
+  let lines = 0;
+  let lastStart = 0;
   for (let i = 0; i < buffer.length; i += 1) {
     if (buffer[i] === 10) {
-      count += 1;
+      lines += 1;
+      if (i + 1 < buffer.length) {
+        lastStart = i + 1;
+      }
     }
   }
-  return count;
+  const last = parseLine(buffer.subarray(lastStart).toString('utf8'));
+  return { lines, lastSeq: typeof last?.seq === 'number' ? last.seq : 0 };
 }
 
 function sleepMs(ms: number): void {
@@ -111,12 +128,15 @@ function processAlive(pid: number): boolean {
 }
 
 /**
- * Cross-process lock via an exclusive lock file holding the owner's pid. A lock is only broken
- * when its owner is gone, or when it is older than LOCK_STALE_MS (a hung holder); an unlink is
- * done only by the owner or by the breaker of a dead lock, never by a waiter.
+ * Cross-process lock via an exclusive lock file holding the owner's token. A lock is only
+ * broken when its owner is gone, or when it is older than LOCK_STALE_MS (a hung holder), and
+ * breaking is done by renaming the stale file away: rename is atomic, so of several contenders
+ * exactly one reclaims and none can remove a lock a new owner has just created. Release only
+ * removes the lock if it still carries our token.
  */
 function withLock(file: string, fn: () => void): boolean {
   const lock = `${file}.lock`;
+  const token = `${process.pid} ${process.hrtime.bigint()}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   while (Date.now() < deadline) {
     let fd: number;
@@ -127,26 +147,30 @@ function withLock(file: string, fn: () => void): boolean {
         return false;
       }
       try {
-        const owner = Number.parseInt(fs.readFileSync(lock, 'utf8').trim(), 10);
+        const owner = Number.parseInt(fs.readFileSync(lock, 'utf8').trim().split(' ')[0], 10);
         const age = Date.now() - fs.statSync(lock).mtimeMs;
         if ((Number.isInteger(owner) && !processAlive(owner)) || age > LOCK_STALE_MS) {
-          fs.unlinkSync(lock);
+          const stale = `${lock}.stale.${process.pid}.${Date.now()}`;
+          fs.renameSync(lock, stale); // fails for all but one contender
+          fs.unlinkSync(stale);
           continue;
         }
       } catch {
-        continue; // released between our checks
+        continue; // released or reclaimed by someone else between our checks
       }
       sleepMs(5);
       continue;
     }
     try {
-      fs.writeSync(fd, String(process.pid));
+      fs.writeSync(fd, token);
       fn();
       return true;
     } finally {
       fs.closeSync(fd);
       try {
-        fs.unlinkSync(lock);
+        if (fs.readFileSync(lock, 'utf8') === token) {
+          fs.unlinkSync(lock);
+        }
       } catch {
         // already gone
       }
@@ -155,7 +179,7 @@ function withLock(file: string, fn: () => void): boolean {
   return false;
 }
 
-/** Keep the newest records that fit both caps: at most MAX_LINES lines and MAX_BYTES / 2 bytes (so trims stay rare). Call under the lock. */
+/** Keep the newest records that fit both caps: at most MAX_LINES lines and MAX_BYTES / 2 bytes (so trims stay rare). Call under the lock; seq numbers survive because order does. */
 function trim(file: string): void {
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).slice(-MAX_LINES);
   const budget = MAX_BYTES / 2;
@@ -184,16 +208,16 @@ function parseLine(line: string): ActivationEvent | null {
   }
 }
 
-/** Where a reader is in the log: byte offset within a specific file identity, and the newest event time already seen. */
+/** Where a reader is in the log: byte offset within a specific file identity, and the newest seq already delivered. */
 export interface LogCursor {
   offset: number;
   /** inode of the file the offset refers to; a trim renames a new file into place, changing it */
   ino: number | null;
-  /** ts of the newest event delivered, so a re-read of a rewritten file skips what was already sent */
-  lastTs: number;
+  /** seq of the newest event delivered, so a re-read of a rewritten file skips what was already sent */
+  lastSeq: number;
 }
 
-export const START_CURSOR: LogCursor = { offset: 0, ino: null, lastTs: 0 };
+export const START_CURSOR: LogCursor = { offset: 0, ino: null, lastSeq: 0 };
 
 /**
  * Events appended since `cursor`, and the advanced cursor. Survives trims (the file is replaced,
@@ -218,7 +242,7 @@ function readSinceUnsafe(file: string, cursor: LogCursor): { events: ActivationE
     const replaced = cursor.ino !== null && stat.ino !== cursor.ino;
     const start = replaced || stat.size < cursor.offset ? 0 : cursor.offset;
     if (stat.size === start) {
-      return { events: [], cursor: { offset: start, ino: stat.ino, lastTs: cursor.lastTs } };
+      return { events: [], cursor: { offset: start, ino: stat.ino, lastSeq: cursor.lastSeq } };
     }
     const buffer = Buffer.alloc(stat.size - start);
     fs.readSync(fd, buffer, 0, buffer.length, start);
@@ -226,9 +250,14 @@ function readSinceUnsafe(file: string, cursor: LogCursor): { events: ActivationE
     // Only consume complete lines; a partial trailing line is picked up on the next read.
     const complete = text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1);
     const all = complete.split('\n').map(parseLine).filter((event): event is ActivationEvent => event !== null);
-    const events = start === 0 && cursor.lastTs > 0 ? all.filter((event) => event.ts > cursor.lastTs) : all;
-    const lastTs = events.reduce((max, event) => (typeof event.ts === 'number' && event.ts > max ? event.ts : max), cursor.lastTs);
-    return { events, cursor: { offset: start + Buffer.byteLength(complete, 'utf8'), ino: stat.ino, lastTs } };
+    const seqOf = (event: ActivationEvent) => (typeof event.seq === 'number' ? event.seq : 0);
+    const maxSeq = all.reduce((max, event) => Math.max(max, seqOf(event)), 0);
+    // Re-reading a rewritten file from the start: skip what was already delivered, unless the
+    // numbering restarted (the log was deleted and recreated), in which case everything is new.
+    const restarted = maxSeq < cursor.lastSeq;
+    const events = start === 0 && cursor.lastSeq > 0 && !restarted ? all.filter((event) => seqOf(event) > cursor.lastSeq) : all;
+    const lastSeq = restarted ? maxSeq : Math.max(cursor.lastSeq, maxSeq);
+    return { events, cursor: { offset: start + Buffer.byteLength(complete, 'utf8'), ino: stat.ino, lastSeq } };
   } finally {
     fs.closeSync(fd);
   }
