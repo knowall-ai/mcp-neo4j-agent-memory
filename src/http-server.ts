@@ -27,6 +27,7 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const PING_SECONDS = 15;
 const SHUTDOWN_GRACE_MS = 10_000;
 const HEALTH_CACHE_MS = 5_000;
+const HEALTH_TIMEOUT_MS = 5_000;
 const BACKPRESSURE_GRACE_MS = 30_000;
 
 interface Settings {
@@ -43,8 +44,9 @@ function settingsFromEnv(env: NodeJS.ProcessEnv): Settings {
   if (!token) {
     throw new ConfigError('REVERIE_SERVE_TOKEN is required for reverie serve');
   }
-  const port = Number.parseInt(env.REVERIE_HTTP_PORT?.trim() || '8643', 10);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  const rawPort = env.REVERIE_HTTP_PORT?.trim() || '8643';
+  const port = /^\d{1,5}$/.test(rawPort) ? Number.parseInt(rawPort, 10) : Number.NaN;
+  if (!Number.isInteger(port) || port > 65535) {
     throw new ConfigError(`REVERIE_HTTP_PORT must be a port number, got ${env.REVERIE_HTTP_PORT}`);
   }
   const seconds = (variable: string, fallback: number) => {
@@ -158,9 +160,13 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
       return Promise.resolve(healthCache.ok);
     }
     if (!healthInFlight) {
-      healthInFlight = neo4j
-        .executeQuery('RETURN 1 AS ok')
-        .then(() => true, () => false)
+      let timer: NodeJS.Timeout | undefined;
+      const timeout = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), HEALTH_TIMEOUT_MS);
+        timer.unref();
+      });
+      healthInFlight = Promise.race([neo4j.executeQuery('RETURN 1 AS ok').then(() => true, () => false), timeout])
+        .finally(() => clearTimeout(timer))
         .then((ok) => {
           healthCache = { at: Date.now(), ok };
           healthInFlight = null;

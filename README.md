@@ -567,9 +567,12 @@ is what makes the Brain view light up. The graph itself never records what was l
 Behind Caddy on an agent's VM:
 
 ```caddyfile
-handle /reverie/* {
-    uri strip_prefix /reverie
-    reverse_proxy 127.0.0.1:8643
+agent.example.com {
+    # … the agent's other routes …
+    handle /reverie/* {
+        uri strip_prefix /reverie
+        reverse_proxy 127.0.0.1:8643
+    }
 }
 ```
 

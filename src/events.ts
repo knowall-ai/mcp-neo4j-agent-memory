@@ -93,6 +93,14 @@ function parseLine(line: string): ActivationEvent | null {
 
 /** Events appended after byte `offset`, and the new offset. Tolerates a trimmed (shrunk) file. */
 export function readSince(file: string, offset: number): { events: ActivationEvent[]; offset: number } {
+  try {
+    return readSinceUnsafe(file, offset);
+  } catch {
+    return { events: [], offset: 0 }; // removed or rotated between calls: start again next time
+  }
+}
+
+function readSinceUnsafe(file: string, offset: number): { events: ActivationEvent[]; offset: number } {
   if (!fs.existsSync(file)) {
     return { events: [], offset: 0 };
   }
@@ -117,11 +125,13 @@ export function readSince(file: string, offset: number): { events: ActivationEve
 
 /** The newest `limit` events, oldest first. */
 export function tail(file: string, limit = 50): ActivationEvent[] {
-  if (!fs.existsSync(file)) {
-    return [];
+  let text: string;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return []; // missing, unreadable or rotated away
   }
-  return fs
-    .readFileSync(file, 'utf8')
+  return text
     .split('\n')
     .filter((line) => line.trim())
     .slice(-limit)

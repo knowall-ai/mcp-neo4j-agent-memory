@@ -14,6 +14,7 @@ import path from 'node:path';
 import { emit, eventsPath, readSince, tail, MAX_BYTES } from '../build/events.js';
 import { parseLimit, cleanProps, clampLimit, diffSnapshot, isEmptyDiff, presenceStats, state, toEpochSeconds, MAX_LIMIT } from '../build/brain.js';
 import { isAuthorized } from '../build/http-server.js';
+import { neo4jConfigError, neo4jConfigFromEnv } from '../build/config.js';
 
 function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} ≈ ${expected}`);
@@ -337,6 +338,19 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     assert.strictEqual(presenceStats({ REVERIE_USAGE_STATS_PATH: '', REVERIE_BOOST_STATE_PATH: path.join(dir, 'missing.json') }).boost, null);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+
+  // ---- Neo4j env parsing: the password is never altered
+  assert.deepStrictEqual(neo4jConfigFromEnv({ NEO4J_URI: ' bolt://x:7687 ', NEO4J_USERNAME: 'neo4j', NEO4J_PASSWORD: ' p a s s ' }),
+    { uri: 'bolt://x:7687', username: 'neo4j', password: ' p a s s ', database: undefined });
+  assert.strictEqual(neo4jConfigFromEnv({ NEO4J_URI: 'bolt://x', NEO4J_USERNAME: 'neo4j', NEO4J_PASSWORD: '   ' }), undefined, 'blank password is unset');
+  assert.strictEqual(neo4jConfigFromEnv({}), undefined);
+  assert.strictEqual(neo4jConfigError({}), null);
+  assert.strictEqual(neo4jConfigError({ NEO4J_URI: 'bolt://x', NEO4J_USERNAME: 'neo4j', NEO4J_PASSWORD: ' p ' }), null);
+  assert.match(neo4jConfigError({ NEO4J_URI: 'bolt://x', NEO4J_USERNAME: 'neo4j', NEO4J_PASSWORD: '  ' }), /NEO4J_PASSWORD/);
+  assert.match(neo4jConfigError({ NEO4J_PASSWORD: 'p' }), /NEO4J_URI/);
+  assert.match(neo4jConfigError({ NEO4J_URI: 'bolt://x', NEO4J_PASSWORD: 'p' }), /NEO4J_USERNAME/);
+  assert.deepStrictEqual(readSince(path.join(os.tmpdir(), 'reverie-no-such-dir', 'x', 'events.jsonl'), 0), { events: [], offset: 0 }, 'unreadable path is empty, not an error');
+  assert.deepStrictEqual(tail(path.join(os.tmpdir(), 'reverie-no-such-dir', 'x', 'events.jsonl')), []);
 
   // ---- bearer auth
   assert.strictEqual(isAuthorized('Bearer secret-token', 'secret-token'), true);

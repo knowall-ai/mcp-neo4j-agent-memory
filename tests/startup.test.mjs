@@ -48,6 +48,12 @@ test('serve refuses to start without REVERIE_SERVE_TOKEN', async () => {
   assert.match(stderr, /REVERIE_SERVE_TOKEN is required/);
 });
 
+test('serve rejects a malformed port', async () => {
+  const { code, stderr } = await runServe({ REVERIE_SERVE_TOKEN: 't', REVERIE_HTTP_PORT: '8643x' });
+  assert.equal(code, 1);
+  assert.match(stderr, /REVERIE_HTTP_PORT/);
+});
+
 test('serve refuses a partial Neo4j configuration', async () => {
   const { code, stderr } = await runServe({ REVERIE_SERVE_TOKEN: 't', NEO4J_URI: 'bolt://localhost:7687' });
   assert.equal(code, 1);
