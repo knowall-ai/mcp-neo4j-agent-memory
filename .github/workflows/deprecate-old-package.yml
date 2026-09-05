@@ -19,12 +19,18 @@ jobs:
   deprecate:
     name: npm deprecate
     runs-on: ubuntu-latest
+    concurrency:
+      group: deprecate-old-package
+      cancel-in-progress: false
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: npm deprecate @knowall-ai/mcp-neo4j-agent-memory "$MESSAGE"
+      # An empty message would UN-deprecate the package, so refuse it.
+      - run: |
+          if [ -z "${MESSAGE// }" ]; then echo "message must not be empty"; exit 1; fi
+          npm deprecate @knowall-ai/mcp-neo4j-agent-memory "$MESSAGE"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           MESSAGE: ${{ inputs.message }}
