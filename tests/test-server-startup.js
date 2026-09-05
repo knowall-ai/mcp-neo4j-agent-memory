@@ -88,6 +88,7 @@ async function runTest(config) {
     let stdout = '';
     let stderr = '';
     let processExited = false;
+    let expectedExit = false; // set just before we kill a server that started correctly
     
     child.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -101,6 +102,7 @@ async function runTest(config) {
       processExited = true;
       
       if (config.shouldStart) {
+        if (expectedExit) return; // our own kill after a successful start
         // A server that is expected to start must still be running when the startup interval
         // ends; any exit before then, even a clean one, is a failure.
         console.log('   ❌ Server exited before the startup interval ended');
@@ -125,6 +127,7 @@ async function runTest(config) {
       setTimeout(() => {
         if (!processExited) {
           // Server is still running, that's good
+          expectedExit = true;
           child.kill();
           console.log('   ✅ Server started successfully');
           resolve(true);
