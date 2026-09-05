@@ -7,7 +7,7 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { BrainSnapshot, clampLimit, diffSnapshot, isEmptyDiff, snapshot, state } from './brain.js';
+import { BrainSnapshot, diffSnapshot, isEmptyDiff, parseLimit, snapshot, state } from './brain.js';
 import { neo4jConfigError, neo4jConfigFromEnv } from './config.js';
 import { Embedder } from './embeddings.js';
 import { eventsPath, readSince, tail } from './events.js';
@@ -26,6 +26,8 @@ export interface HttpServerHandle {
 const MAX_BODY_BYTES = 1024 * 1024;
 const PING_SECONDS = 15;
 const SHUTDOWN_GRACE_MS = 10_000;
+const HEALTH_CACHE_MS = 5_000;
+const BACKPRESSURE_GRACE_MS = 30_000;
 
 interface Settings {
   token: string;
@@ -120,6 +122,12 @@ function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
       }
     });
     req.on('error', reject);
+    // A client abort can close the request without 'end' or 'error'; do not leave the handler pending.
+    req.on('close', () => {
+      if (!req.readableEnded) {
+        reject(new Error('request closed before the body was received'));
+      }
+    });
   });
 }
 
@@ -138,16 +146,28 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
   const embedder: Embedder | null = config ? safeCreateEmbedder() : null;
   const run = neo4j ? (cypher: string, params?: Record<string, unknown>) => neo4j.executeQuery(cypher, params ?? {}) : null;
 
-  async function neo4jHealthy(): Promise<boolean> {
+  // The health probe is unauthenticated, so it is cached and coalesced: at most one Neo4j
+  // session per HEALTH_CACHE_MS no matter how many callers arrive.
+  let healthCache: { at: number; ok: boolean } | null = null;
+  let healthInFlight: Promise<boolean> | null = null;
+  function neo4jHealthy(): Promise<boolean> {
     if (!neo4j) {
-      return false;
+      return Promise.resolve(false);
     }
-    try {
-      await neo4j.executeQuery('RETURN 1 AS ok');
-      return true;
-    } catch {
-      return false;
+    if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
+      return Promise.resolve(healthCache.ok);
     }
+    if (!healthInFlight) {
+      healthInFlight = neo4j
+        .executeQuery('RETURN 1 AS ok')
+        .then(() => true, () => false)
+        .then((ok) => {
+          healthCache = { at: Date.now(), ok };
+          healthInFlight = null;
+          return ok;
+        });
+    }
+    return healthInFlight;
   }
 
   async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -182,11 +202,23 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no'
     });
-    const send = (event: string, data: unknown) => {
-      if (!res.writableEnded) {
-        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    // Backpressure: when the client stops reading, stop producing (nothing is queued in memory)
+    // and drop the connection if it has not drained within BACKPRESSURE_GRACE_MS.
+    let blocked = false;
+    let blockedSince = 0;
+    const write = (chunk: string) => {
+      if (blocked || res.writableEnded) {
+        return;
+      }
+      if (!res.write(chunk)) {
+        blocked = true;
+        blockedSince = Date.now();
+        res.once('drain', () => {
+          blocked = false;
+        });
       }
     };
+    const send = (event: string, data: unknown) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     const file = eventsPath(env);
     let offset = 0;
     if (file) {
@@ -199,7 +231,7 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
     let prev: BrainSnapshot | null = null;
     let polling = false;
     const pollGraph = async () => {
-      if (polling || !run) {
+      if (polling || blocked || !run) {
         return;
       }
       polling = true;
@@ -232,8 +264,8 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
     pollGraph().then(() => send('state', state(undefined, undefined, env)));
     timers.push(
       setInterval(() => {
-        if (!file) {
-          return;
+        if (!file || blocked) {
+          return; // leave the offset alone so nothing is skipped while the client is not reading
         }
         const next = readSince(file, offset);
         offset = next.offset;
@@ -244,9 +276,12 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
       setInterval(() => void pollGraph(), settings.graphPollMs),
       setInterval(() => send('state', state(undefined, undefined, env)), settings.statePollMs),
       setInterval(() => {
-        if (!res.writableEnded) {
-          res.write(': ping\n\n');
+        if (blocked && Date.now() - blockedSince > BACKPRESSURE_GRACE_MS) {
+          stop();
+          res.destroy();
+          return;
         }
+        write(': ping\n\n');
       }, PING_SECONDS * 1000)
     );
   }
@@ -277,11 +312,15 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
         sendJson(res, 405, { error: 'Method not allowed' });
         return;
       }
+      const limit = parseLimit(url.searchParams.get('limit'));
+      if (limit === null) {
+        sendJson(res, 400, { error: 'limit must be an integer between 1 and 1500' });
+        return;
+      }
       if (!run) {
         sendJson(res, 503, { error: 'Neo4j not configured' });
         return;
       }
-      const limit = clampLimit(url.searchParams.get('limit'));
       if (path === '/brain/graph') {
         try {
           const snap = await snapshot(run, limit);

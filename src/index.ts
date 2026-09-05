@@ -42,7 +42,16 @@ function startStdio(): void {
     process.exit(1);
   });
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    process.off('SIGINT', shutdown);
+    process.off('SIGTERM', shutdown);
+    const force = setTimeout(() => process.exit(1), 10_000);
+    force.unref();
     try {
       await server.close();
       process.exit(0);

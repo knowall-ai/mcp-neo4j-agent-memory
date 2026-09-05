@@ -70,6 +70,7 @@ test('serve without Neo4j: health, auth, 404, 503 and MCP over HTTP', async () =
     assert.equal((await fetch(`${serve.url}/brain/events`, { headers: { Authorization: `Bearer ${token}` } })).status, 503);
     assert.equal((await fetch(`${serve.url}/brain/state`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })).status, 405);
     assert.equal((await fetch(`${serve.url}/nope`, { headers: { Authorization: `Bearer ${token}` } })).status, 404);
+    assert.equal((await fetch(`${serve.url}/brain/graph?limit=12x`, { headers: { Authorization: `Bearer ${token}` } })).status, 400, 'bad limit is rejected before anything else');
 
     assert.equal((await mcpRequest(serve.url, undefined, 'tools/list')).status, 401, 'mcp needs the bearer too');
     const listed = await mcpRequest(serve.url, token, 'tools/list');

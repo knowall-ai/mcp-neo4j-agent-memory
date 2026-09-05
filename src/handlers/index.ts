@@ -67,6 +67,7 @@ export async function handleToolCall(
   neo4jClient: Neo4jClient,
   embedder: Embedder | null
 ): Promise<CallToolResult> {
+  let activeDream: string | null = null;
   try {
     switch (name) {
       case 'search_memories': {
@@ -128,6 +129,7 @@ export async function handleToolCall(
         const rankedIds = topRanked.map((item) => item.id);
 
         if (rankedIds.length === 0) {
+          emit('recall', { ids: [], names: [], terms: searchTerms(query) });
           return jsonResult([]);
         }
 
@@ -158,7 +160,7 @@ export async function handleToolCall(
         emit('recall', {
           ids: orderedResult.map((row) => String(row.memory._id)),
           names: orderedResult.map((row) => (typeof row.memory?.name === 'string' ? row.memory.name : null)),
-          terms: query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 10)
+          terms: searchTerms(query)
         });
         return jsonResult(orderedResult);
       }
@@ -348,6 +350,7 @@ export async function handleToolCall(
         const dreamName = `dream-${new Date().toISOString().replace(/[-:]/g, '').replace(/T(\d{4}).*$/, '-$1')}`;
         if (!dryRun) {
           emit('dream.start', { name: dreamName });
+          activeDream = dreamName;
         }
 
         const labelRows = await neo4jClient.executeQuery<{ label: string }>('CALL db.labels() YIELD label RETURN label ORDER BY label');
@@ -532,6 +535,7 @@ export async function handleToolCall(
 
         if (!dryRun) {
           emit('dream.end', { name: dreamName, relabelled, merged, reembedded });
+          activeDream = null;
         }
         return jsonResult({
           dry_run: dryRun,
@@ -566,6 +570,9 @@ export async function handleToolCall(
         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
   } catch (error) {
+    if (activeDream) {
+      emit('dream.end', { name: activeDream, failed: true });
+    }
     console.error('Error executing tool:', error);
     return {
       content: [
@@ -798,6 +805,10 @@ async function findBloatedNodes(neo4jClient: Neo4jClient, limit: number): Promis
     .filter((node) => node.properties > limit)
     .sort((left, right) => right.properties - left.properties)
     .slice(0, 20);
+}
+
+function searchTerms(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 10);
 }
 
 function emitRemember(memory: Record<string, any> | undefined, label: string): void {

@@ -115,7 +115,22 @@ const LABEL_STATS_QUERY = `
 MATCH (n) WHERE n.status IS NULL OR n.status <> 'archived'
 RETURN head(labels(n)) AS label, count(*) AS n`;
 
-const REL_STATS_QUERY = 'MATCH ()-[r]->() RETURN type(r) AS type, count(*) AS n';
+const REL_STATS_QUERY = `
+MATCH (a)-[r]->(b)
+WHERE (a.status IS NULL OR a.status <> 'archived') AND (b.status IS NULL OR b.status <> 'archived')
+RETURN type(r) AS type, count(*) AS n`;
+
+/** A query-string `limit`: absent → the default; otherwise it must be a base-10 integer in 1..MAX_LIMIT, else null. */
+export function parseLimit(raw: string | null | undefined): number | null {
+  if (raw === null || raw === undefined || raw === '') {
+    return DEFAULT_LIMIT;
+  }
+  if (!/^\d{1,5}$/.test(raw)) {
+    return null;
+  }
+  const value = Number.parseInt(raw, 10);
+  return value >= 1 && value <= MAX_LIMIT ? value : null;
+}
 
 export function clampLimit(value: unknown, fallback = DEFAULT_LIMIT): number {
   const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);

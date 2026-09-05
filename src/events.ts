@@ -20,6 +20,7 @@ export interface ActivationEvent {
 
 export const MAX_BYTES = 5 * 1024 * 1024;
 export const MAX_LINES = 5000;
+export const MAX_RECORD_BYTES = 64 * 1024;
 
 let warned = false;
 
@@ -45,7 +46,11 @@ export function emit(kind: string, data: Record<string, unknown> = {}, env: Node
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const record: ActivationEvent = { ts: Date.now() / 1000, kind, ...data };
-    fs.appendFileSync(file, JSON.stringify(record) + '\n', 'utf8');
+    const line = JSON.stringify(record) + '\n';
+    if (Buffer.byteLength(line, 'utf8') > MAX_RECORD_BYTES) {
+      return; // one runaway record must not blow the log's budget
+    }
+    fs.appendFileSync(file, line, 'utf8');
     if (fs.statSync(file).size > MAX_BYTES) {
       trim(file);
     }
@@ -57,10 +62,19 @@ export function emit(kind: string, data: Record<string, unknown> = {}, env: Node
   }
 }
 
+/** Keep the newest records that fit both caps: at most MAX_LINES lines and MAX_BYTES / 2 bytes (so trims stay rare). */
 function trim(file: string): void {
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).slice(-MAX_LINES);
+  const budget = MAX_BYTES / 2;
+  let bytes = lines.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0);
+  let start = 0;
+  while (start < lines.length && bytes > budget) {
+    bytes -= Buffer.byteLength(lines[start], 'utf8') + 1;
+    start += 1;
+  }
+  const kept = lines.slice(start);
   const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, lines.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '', 'utf8');
   fs.renameSync(tmp, file);
 }
 

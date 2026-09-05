@@ -25,7 +25,13 @@ export function startServe(env = {}, { timeoutMs = 15000 } = {}) {
           url: `http://127.0.0.1:${port}`,
           stderr: () => stderr,
           exited,
-          async close() { child.kill('SIGTERM'); return exited; }
+          async close({ timeoutMs: closeMs = 5000 } = {}) {
+            child.kill('SIGTERM');
+            const timer = new Promise((r) => setTimeout(r, closeMs, 'timeout'));
+            const result = await Promise.race([exited, timer]);
+            if (result === 'timeout') { child.kill('SIGKILL'); return exited; }
+            return result;
+          }
         });
       }
     });

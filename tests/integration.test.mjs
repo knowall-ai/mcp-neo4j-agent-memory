@@ -322,8 +322,14 @@ test('reverie serve: MCP over HTTP, brain snapshot and live events', async () =>
     assert.ok(diff.data.stats && diff.data.stats.labels.Project >= 1);
     assert.ok(second && (await second).ok);
   } finally {
-    for (const id of created) await ok('delete_memory', { nodeId: id });
-    await serve.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      for (const id of created) await ok('delete_memory', { nodeId: id });
+    } finally {
+      try {
+        await serve.close();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
   }
 });

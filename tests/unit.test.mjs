@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { emit, eventsPath, readSince, tail, MAX_BYTES } from '../build/events.js';
-import { cleanProps, clampLimit, diffSnapshot, isEmptyDiff, presenceStats, state, toEpochSeconds, MAX_LIMIT } from '../build/brain.js';
+import { parseLimit, cleanProps, clampLimit, diffSnapshot, isEmptyDiff, presenceStats, state, toEpochSeconds, MAX_LIMIT } from '../build/brain.js';
 import { isAuthorized } from '../build/http-server.js';
 
 function approxEqual(actual, expected, epsilon = 1e-9) {
@@ -233,8 +233,11 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     assert.ok(fs.statSync(big).size > MAX_BYTES);
     emit('recall', { pad: 'y' }, { REVERIE_EVENTS_PATH: big });
     const lines = fs.readFileSync(big, 'utf8').split('\n').filter(Boolean);
-    assert.ok(lines.length <= 5000 && lines.length >= 4999, `trimmed to ${lines.length} lines`);
+    assert.ok(lines.length <= 5000 && lines.length > 1000, `trimmed to ${lines.length} lines`);
     assert.match(lines[lines.length - 1], /"pad":"y"/, 'newest event survives the trim');
+    assert.ok(fs.statSync(big).size <= MAX_BYTES / 2, `trimmed file is byte-bounded (${fs.statSync(big).size} bytes)`);
+    emit('recall', { pad: 'z'.repeat(70 * 1024) }, { REVERIE_EVENTS_PATH: big });
+    assert.ok(!fs.readFileSync(big, 'utf8').includes('zzzz'), 'a record over 64 KiB is refused');
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
@@ -251,6 +254,11 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.strictEqual(clampLimit(99_999), MAX_LIMIT);
   assert.strictEqual(clampLimit('abc'), 400);
   assert.strictEqual(clampLimit(null, 7), 7);
+  assert.strictEqual(parseLimit(null), 400, 'absent limit takes the default');
+  assert.strictEqual(parseLimit(''), 400);
+  assert.strictEqual(parseLimit('50'), 50);
+  assert.strictEqual(parseLimit('1500'), 1500);
+  for (const bad of ['0', '1501', '12x', '1.5', '-3', ' 5', '99999']) assert.strictEqual(parseLimit(bad), null, `rejects ${JSON.stringify(bad)}`);
   {
     const cleaned = cleanProps({
       name: 'Ben', age: 40, ok: true, none: null, embedding: [1, 2], name_embedding: [1], embedding_model: 'm', embedded_at: 'x',
