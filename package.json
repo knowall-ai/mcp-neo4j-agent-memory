@@ -19,7 +19,7 @@
     "test": "node --test tests/unit.test.mjs tests/startup.test.mjs tests/integration.test.mjs",
     "test:unit": "node --test tests/unit.test.mjs tests/startup.test.mjs",
     "test:integration": "node --test tests/integration.test.mjs",
-    "test:coverage": "c8 --include 'build/**' --exclude 'build/index.js' --check-coverage --lines 70 --functions 70 --reporter text --reporter lcov node --test tests/unit.test.mjs tests/startup.test.mjs tests/integration.test.mjs"
+    "test:coverage": "c8 --all --include 'build/**' --exclude 'build/index.js' --check-coverage --lines 70 --functions 70 --reporter text --reporter lcov node --test tests/unit.test.mjs tests/startup.test.mjs tests/integration.test.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

@@ -74,12 +74,12 @@ const fails = async (name, args, pattern) => {
   return r.error;
 };
 
-test('lists the thirteen tools', async () => {
+test('lists the twelve tools', async () => {
   const names = (await mcp.listTools()).map((t) => t.name).sort();
   assert.deepEqual(names, [
     'create_connection', 'create_memory', 'delete_connection', 'delete_memory', 'dream', 'get_guidance',
     'list_memory_labels', 'memory_stats', 'query_memories', 'search_memories', 'update_connection', 'update_memory'
-  ].concat(['get_guidance']).filter((n, i, a) => a.indexOf(n) === i).sort());
+  ]);
 });
 
 const ids = {};
