@@ -1,6 +1,19 @@
 import { cypherIdentifier } from './types.js';
 import neo4j, { Driver, Integer, Node, QueryResult, Record as Neo4jRecord, Relationship, Session } from 'neo4j-driver';
 
+const CLOSE_TIMEOUT_MS = 5_000;
+
+/** session.close() awaits connection release with no deadline; a stuck release must not hang a tool call. */
+async function closeBounded(session: Session): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<void>((resolve) => { timer = setTimeout(resolve, CLOSE_TIMEOUT_MS); });
+  try {
+    await Promise.race([session.close().catch(() => undefined), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface Neo4jQueryParams {
   [key: string]: any;
 }
@@ -32,6 +45,8 @@ export class Neo4jClient {
         ...this.convertNestedIntegers(value.properties),
         _id: value.identity.toNumber(),
         _type: value.type,
+        _start: value.start.toNumber(),
+        _end: value.end.toNumber(),
       };
     }
 
@@ -89,7 +104,7 @@ export class Neo4jClient {
       const result: QueryResult = await session.run(query, params);
       return result.records.map((record: Neo4jRecord) => this.recordToObject<T>(record));
     } finally {
-      await session.close();
+      await closeBounded(session);
     }
   }
 
@@ -125,7 +140,7 @@ export class Neo4jClient {
         return rows;
       }, { timeout: options.timeoutMs });
     } finally {
-      await session.close();
+      await closeBounded(session);
     }
   }
 

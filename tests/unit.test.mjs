@@ -2,7 +2,7 @@
 
 import assert from 'assert';
 import { cosine, createEmbedder, embeddingText, nameText, scrub } from '../build/embeddings.js';
-import { keywordMatches, rank } from '../build/search.js';
+import { exactMatches, keywordMatches, rank } from '../build/search.js';
 import { contentKeys, factLikeKeys, maxProperties } from '../build/hygiene.js';
 import { readOnlyViolation, stripComments } from '../build/cypher-guard.js';
 import { cypherIdentifier, isCreateConnectionArgs, isCreateMemoryArgs, isDreamArgs, isMemoryStatsArgs, isQueryMemoriesArgs, isSearchMemoriesArgs } from '../build/types.js';
@@ -98,6 +98,10 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
 
   assert.strictEqual(nameText('Person', { name: 'Ben Weeks', aliases: ['Benjamin'], context: 'ignored' }), 'Person: Ben Weeks\naliases: Benjamin');
 
+  assert.strictEqual(exactMatches('ben weeks', { name: 'Ben Weeks' }), true);
+  assert.strictEqual(exactMatches('Ben', { name: 'Benjamin Weeks', aliases: ['Ben'] }), true);
+  assert.strictEqual(exactMatches('Ben', { name: 'Benjamin Weeks' }), false);
+  assert.deepStrictEqual(rank([{ id: 1, props: { name: 'Ben Weeks' } }, { id: 2, props: { name: 'Benjamin Weeks' } }], { query: 'ben weeks', mode: 'exact', threshold: 0.4 }).map((r) => [r.id, r.match]), [[1, 'exact']]);
   assert.strictEqual(keywordMatches('Ben Weeks', { name: 'Benjamin' }), true);
   assert.strictEqual(keywordMatches('Benjamin', { name: 'Ben' }), false);
 
@@ -129,6 +133,12 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.ok(readOnlyViolation("CALL /* hi */ apoc.load.json('http://169.254.169.254/') YIELD value RETURN value"));
   assert.ok(readOnlyViolation("CALL // c\n apoc.create.node(['X'], {}) YIELD node RETURN node"));
   assert.strictEqual(readOnlyViolation('CALL /* fine */ db.labels() YIELD label RETURN label'), null);
+  // a // inside a string literal is not a comment and cannot hide what follows it
+  assert.ok(readOnlyViolation("WITH 'https://example.test' AS x CALL apoc.load.json(x) YIELD value RETURN value"));
+  assert.ok(readOnlyViolation('WITH "http://a//b" AS x CALL apoc.load.json(x) YIELD value RETURN value'));
+  // keywords inside strings are not clauses
+  assert.strictEqual(readOnlyViolation("MATCH (n) WHERE n.note = 'please DELETE this' RETURN n"), null);
+  assert.strictEqual(readOnlyViolation("MATCH (n) WHERE n.name = 'It''s // not a comment' RETURN n"), null);
   assert.strictEqual(stripComments('MATCH (n) // trailing\nRETURN n /* block */'), 'MATCH (n)  \nRETURN n  ');
 
   // labels and relationship types are identifiers; anything else is rejected before it reaches Cypher

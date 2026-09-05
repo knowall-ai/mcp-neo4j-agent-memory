@@ -92,6 +92,10 @@ export async function handleToolCall(
         const conditions: string[] = [];
         const queryParams: Record<string, any> = {};
 
+        if (!args.include_archived) {
+          conditions.push("coalesce(memory.status, '') <> 'archived'");
+        }
+
         if (args.label) {
           conditions.push('toLower(labels(memory)[0]) = toLower($label)');
           queryParams.label = args.label;
@@ -107,7 +111,7 @@ export async function handleToolCall(
         }
 
         // Keyword mode never needs the stored vectors, so leave them out of the wire payload.
-        const propsProjection = requestedMode === 'keyword'
+        const propsProjection = requestedMode === 'keyword' || requestedMode === 'exact'
           ? 'memory {.*, embedding: null, name_embedding: null}'
           : 'properties(memory)';
         baseQuery += ` RETURN id(memory) AS id, labels(memory)[0] AS label, ${propsProjection} AS props ORDER BY id(memory)`;
@@ -126,7 +130,7 @@ export async function handleToolCall(
           return jsonResult([]);
         }
 
-        const result = await fetchMemories(neo4jClient, rankedIds, depth, orderBy, limit);
+        const result = await fetchMemories(neo4jClient, rankedIds, depth, orderBy, limit, Boolean(args.include_archived));
         const scoring = new Map<number, { score: number; match: Ranked['match'] }>(
           topRanked.map((item) => [item.id, { score: Number(item.score.toFixed(2)), match: item.match }])
         );
@@ -238,6 +242,7 @@ export async function handleToolCall(
 
         const query = `
           MATCH (memory)
+          WHERE $includeArchived OR coalesce(memory.status, '') <> 'archived'
           WITH labels(memory) AS nodeLabels
           UNWIND nodeLabels AS label
           WITH label, count(*) AS count
@@ -245,7 +250,7 @@ export async function handleToolCall(
           RETURN collect({label: label, count: count}) AS labels, sum(count) AS totalMemories
         `;
 
-        const result = await neo4jClient.executeQuery(query, {});
+        const result = await neo4jClient.executeQuery(query, { includeArchived: Boolean(args.include_archived) });
         return jsonResult(result);
       }
 
@@ -355,7 +360,7 @@ export async function handleToolCall(
             const [countRow] = await neo4jClient.executeQuery<{ count: number }>(
               `MATCH (n:\`${escapedSource}\`)
                REMOVE n:\`${escapedSource}\`
-               SET n:\`${escapedTarget}\`
+               SET n:\`${escapedTarget}\`, n.embedding_model = null
                RETURN count(n) AS count`
             );
             relabelled += countRow?.count ?? 0;
@@ -567,7 +572,7 @@ async function rankCandidates(
   let effectiveMode = requestedMode;
   let queryEmbedding: number[] | undefined;
 
-  if (trimmedQuery && requestedMode !== 'keyword') {
+  if (trimmedQuery && requestedMode !== 'keyword' && requestedMode !== 'exact') {
     if (!embedder) {
       effectiveMode = 'keyword';
     } else {
@@ -669,7 +674,8 @@ async function fetchMemories(
   memoryIds: number[],
   depth: number,
   orderBy: string,
-  limit: number
+  limit: number,
+  includeArchived: boolean
 ): Promise<Record<string, any>[]> {
   let finalQuery = `
     MATCH (memory)
@@ -677,8 +683,10 @@ async function fetchMemories(
   `;
 
   if (depth > 0) {
+    // Archived nodes are hidden from the neighbourhood too, and a path through one is not followed.
     finalQuery += `
       OPTIONAL MATCH path = (memory)-[*1..${depth}]-(related)
+      WHERE $includeArchived OR all(x IN nodes(path) WHERE coalesce(x.status, '') <> 'archived')
       RETURN memory, collect(DISTINCT {
         memory: related,
         relationship: relationships(path)[0],
@@ -695,7 +703,7 @@ async function fetchMemories(
     `;
   }
 
-  return neo4jClient.executeQuery(finalQuery, { memoryIds });
+  return neo4jClient.executeQuery(finalQuery, { memoryIds, includeArchived });
 }
 
 interface DuplicateGroupReport {

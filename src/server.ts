@@ -7,6 +7,16 @@ import { Neo4jClient } from './neo4j-client.js';
 import { tools } from './tools/definitions.js';
 import { Neo4jServerConfig } from './types.js';
 
+/** A misconfigured provider (missing key, http endpoint…) must not stop the server; search degrades to keyword. */
+function safeCreateEmbedder(): Embedder | null {
+  try {
+    return createEmbedder();
+  } catch (error) {
+    console.error('Embeddings disabled:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 export class Neo4jServer {
   private server: Server;
   private neo4j: Neo4jClient | null;
@@ -26,7 +36,7 @@ export class Neo4jServer {
     );
 
     this.neo4j = config ? new Neo4jClient(config.uri, config.username, config.password, config.database) : null;
-    this.embedder = config ? createEmbedder() : null;
+    this.embedder = config ? safeCreateEmbedder() : null;
     this.setupToolHandlers();
 
     this.server.onerror = (error) => console.error('[MCP Error]', error);

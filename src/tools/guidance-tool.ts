@@ -51,7 +51,7 @@ export function getGuidanceContent(topic?: string): string {
 
     labels: `## Common Memory Labels
 
-Use these labels when creating memories (always use lowercase):
+Use these labels when creating memories (Capitalised singular is canonical; lowercase is accepted and canonicalised by dream):
 
 **People & Living Things**
 - person: Individual people
@@ -134,7 +134,7 @@ Use UPPERCASE for relationship types:
 - Show distinguishing details: "I found 3 people named John: John Smith (Engineer at Google), John Smith (Doctor), John Smith (Teacher). Which one did you mean?"
 - If unsure about a match, describe it and ask: "I found John Smith who works at TechCorp. Is this the same person?"
 - Only create new memory after confirming it's not a duplicate
-- Always use lowercase for labels
+- Labels are plain identifiers; Capitalised singular is canonical (Person, Organization, Concept)
 - Include a 'name' property for easy identification
 - 'created_at' is automatic if not provided
 - IMMEDIATELY after creating, connect it to related memories
@@ -157,6 +157,8 @@ Use UPPERCASE for relationship types:
 - Empty query string returns all memories
 - Use search_mode: "hybrid" (the default) to return keyword matches first, then semantic matches above the threshold
 - Use search_mode: "keyword" to match any word of the query as a substring of any searchable content property (not timestamps, status or embedding fields), or search_mode: "semantic" for meaning-first recall
+- Use search_mode: "exact" before creating: it matches only a memory whose name, alias or email equals the query, case-insensitively
+- Archived memories are excluded unless include_archived: true
 - Lower similarity_threshold (for example 0.35) to widen semantic matches, or raise it (for example 0.7) to be stricter
 - Results include _score and _match so you can explain why something was returned
 - Use label parameter to filter by type

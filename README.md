@@ -75,8 +75,11 @@ This approach makes the system more powerful and adaptable, as improvements in L
 - `hybrid` (default): keyword hits score `1`, then semantic matches add close variants such as `Benjamin Weeks` for `Ben Weeks`
 - `keyword`: any word of the query as a substring of any searchable content property (timestamps, `status` and embedding fields are never matched)
 - `semantic`: uses embeddings only when available, with graceful fallback to keyword behavior if embeddings are unavailable
+- `exact`: case-insensitive equality on `name`, `aliases` or `email`; the precise lookup to run before creating a memory, so "ben weeks" finds exactly "Ben Weeks" and nothing else
 
-Use `similarity_threshold` (default `0.4`, clamped to `0..1`) to control how strict semantic matches are. Results include `_score` and `_match` on each returned `memory` object so callers can explain why a memory was returned.
+Archived memories (`status = 'archived'`) are left out of results and of `list_memory_labels` unless `include_archived: true` is passed. Returned relationships carry `_start` and `_end` node ids, so a connection's direction is always recoverable.
+
+Use `similarity_threshold` (default `0.4`; must be between `0` and `1`, other values are rejected) to control how strict semantic matches are. Results include `_score` and `_match` on each returned `memory` object so callers can explain why a memory was returned.
 
 ### Neo4j Enterprise Support
 
@@ -92,7 +95,7 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
   - Filter by memory type (case-insensitive, so `person` and `Person` both work), date, depth, result limit, and sort order
 
 - `create_memory`: Create a new memory in the knowledge graph
-  - Flexible type system - use any label in lowercase (person, place, project, skill, etc.)
+  - Flexible type system - any label that is a plain identifier; Capitalised singular is canonical (Person, Place, Project, Skill…), and `dream` canonicalises lowercase labels
   - Store any properties as key-value pairs
   - Automatic timestamps for temporal tracking
 
@@ -424,9 +427,9 @@ Here are the events you attended last month:
 
 The system doesn't enforce strict types - you can create any type of memory that makes sense:
 
-**Common Types** (lowercase): person, place, organization, project, event, topic, object, animal, plant, food, activity, media, skill, document, meeting, task, habit, health, vehicle, tool, idea, goal
+**Common Types** (Capitalised singular is canonical; lowercase is accepted and canonicalised by `dream`): person, place, organization, project, event, topic, object, animal, plant, food, activity, media, skill, document, meeting, task, habit, health, vehicle, tool, idea, goal
 
-**But you can use any type** (lowercase): recipe, dream, memory, quote, book, movie, emotion, relationship, appointment, medication, exercise, symptom, payment, contract, etc.
+**But you can use any type** (any plain identifier): recipe, dream, memory, quote, book, movie, emotion, relationship, appointment, medication, exercise, symptom, payment, contract, etc.
 
 The LLM will intelligently reuse existing types when appropriate to maintain consistency.
 
