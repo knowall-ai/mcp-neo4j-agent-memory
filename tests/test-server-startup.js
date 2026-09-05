@@ -101,15 +101,12 @@ async function runTest(config) {
       processExited = true;
       
       if (config.shouldStart) {
-        if (code === 0 || stderr.includes('Neo4j MCP server running on stdio')) {
-          console.log('   ✅ Server started successfully');
-          resolve(true);
-        } else {
-          console.log('   ❌ Server failed to start');
-          console.log('   Exit code:', code);
-          console.log('   Stderr:', stderr);
-          resolve(false);
-        }
+        // A server that is expected to start must still be running when the startup interval
+        // ends; any exit before then, even a clean one, is a failure.
+        console.log('   ❌ Server exited before the startup interval ended');
+        console.log('   Exit code:', code);
+        console.log('   Stderr:', stderr);
+        resolve(false);
       } else {
         if (code !== 0 && config.expectedError && stderr.includes(config.expectedError)) {
           console.log(`   ✅ Server correctly failed with expected error: "${config.expectedError}"`);
