@@ -7,10 +7,10 @@
 import http from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { BrainSnapshot, diffSnapshot, isEmptyDiff, parseLimit, snapshot, state } from './brain.js';
+import { BrainSnapshot, diffSnapshot, isEmptyDiff, parseLimit, snapshot, snapshotAsDiff, state } from './brain.js';
 import { neo4jConfigError, neo4jConfigFromEnv } from './config.js';
 import { Embedder } from './embeddings.js';
-import { eventsPath, readSince, tail } from './events.js';
+import { ActivationEvent, eventsPath, readSince, tail } from './events.js';
 import { Neo4jClient } from './neo4j-client.js';
 import { createMcpServer, safeCreateEmbedder } from './server.js';
 
@@ -29,9 +29,11 @@ const SHUTDOWN_GRACE_MS = 10_000;
 const HEALTH_CACHE_MS = 5_000;
 const HEALTH_TIMEOUT_MS = 5_000;
 const BACKPRESSURE_GRACE_MS = 30_000;
+const PENDING_ACTIVATIONS_MAX = 1000;
 
 interface Settings {
   token: string;
+  allowedOrigins: Set<string>;
   host: string;
   port: number;
   graphPollMs: number;
@@ -55,6 +57,9 @@ function settingsFromEnv(env: NodeJS.ProcessEnv): Settings {
   };
   return {
     token,
+    // Streamable HTTP requires Origin validation. Non-browser clients send no Origin; a browser
+    // origin is accepted only when listed in REVERIE_ALLOWED_ORIGINS (comma-separated).
+    allowedOrigins: new Set((env.REVERIE_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim().toLowerCase()).filter(Boolean)),
     host: env.REVERIE_HTTP_HOST?.trim() || '127.0.0.1',
     port,
     graphPollMs: seconds('REVERIE_GRAPH_POLL_SECONDS', 5),
@@ -208,30 +213,44 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no'
     });
-    // Backpressure: when the client stops reading, stop producing (nothing is queued in memory)
-    // and drop the connection if it has not drained within BACKPRESSURE_GRACE_MS.
+    // Backpressure: when the client stops reading, stop producing. Activations wait in a bounded
+    // queue and the graph baseline only advances once its frame was handed to the socket, so
+    // nothing is silently lost; a connection that has not drained in BACKPRESSURE_GRACE_MS is dropped.
     let blocked = false;
     let blockedSince = 0;
-    const write = (chunk: string) => {
+    const pending: ActivationEvent[] = [];
+    const write = (chunk: string): boolean => {
       if (blocked || res.writableEnded) {
-        return;
+        return false;
       }
       if (!res.write(chunk)) {
         blocked = true;
         blockedSince = Date.now();
         res.once('drain', () => {
           blocked = false;
+          flushPending();
         });
       }
+      return true;
     };
-    const send = (event: string, data: unknown) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const send = (event: string, data: unknown): boolean => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const flushPending = () => {
+      while (pending.length > 0 && !blocked && !res.writableEnded) {
+        send('activation', pending.shift());
+      }
+    };
+    const queueActivations = (events: ActivationEvent[]) => {
+      pending.push(...events);
+      if (pending.length > PENDING_ACTIVATIONS_MAX) {
+        pending.splice(0, pending.length - PENDING_ACTIVATIONS_MAX);
+      }
+      flushPending();
+    };
     const file = eventsPath(env);
     let offset = 0;
     if (file) {
       // Recent history first so the view can light up what just happened
-      for (const event of tail(file, 30)) {
-        send('activation', event);
-      }
+      queueActivations(tail(file, 30));
       offset = readSince(file, 0).offset;
     }
     let prev: BrainSnapshot | null = null;
@@ -243,13 +262,12 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
       polling = true;
       try {
         const curr = await snapshot(run, limit);
-        if (prev) {
-          const diff = diffSnapshot(prev, curr);
-          if (!isEmptyDiff(diff)) {
-            send('graph', { ...diff, stats: curr.stats });
-          }
+        // The first frame is the full snapshot, so the stream never depends on what the client
+        // fetched from /brain/graph moments earlier.
+        const diff = prev ? diffSnapshot(prev, curr) : snapshotAsDiff(curr);
+        if (isEmptyDiff(diff) || send('graph', { ...diff, stats: curr.stats })) {
+          prev = curr;
         }
-        prev = curr;
       } catch (error) {
         send('error', { message: errorMessage(error) });
       } finally {
@@ -270,14 +288,12 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
     pollGraph().then(() => send('state', state(undefined, undefined, env)));
     timers.push(
       setInterval(() => {
-        if (!file || blocked) {
-          return; // leave the offset alone so nothing is skipped while the client is not reading
+        if (!file) {
+          return;
         }
         const next = readSince(file, offset);
         offset = next.offset;
-        for (const event of next.events) {
-          send('activation', event);
-        }
+        queueActivations(next.events);
       }, settings.eventPollMs),
       setInterval(() => void pollGraph(), settings.graphPollMs),
       setInterval(() => send('state', state(undefined, undefined, env)), settings.statePollMs),
@@ -303,6 +319,11 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
     }
     if (!isAuthorized(req.headers.authorization, settings.token)) {
       sendJson(res, 401, { error: 'Unauthorized' });
+      return;
+    }
+    const origin = req.headers.origin;
+    if (origin !== undefined && !settings.allowedOrigins.has(origin.trim().toLowerCase())) {
+      sendJson(res, 403, { error: 'Origin not allowed' });
       return;
     }
     if (path === '/mcp') {

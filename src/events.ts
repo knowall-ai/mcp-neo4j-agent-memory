@@ -21,8 +21,12 @@ export interface ActivationEvent {
 export const MAX_BYTES = 5 * 1024 * 1024;
 export const MAX_LINES = 5000;
 export const MAX_RECORD_BYTES = 64 * 1024;
+const LINE_CHECK_EVERY = 250;
+const LOCK_STALE_MS = 5_000;
+const LOCK_TRIES = 50;
 
 let warned = false;
+let appendsSinceLineCheck = 0;
 
 export function eventsPath(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = env.REVERIE_EVENTS_PATH;
@@ -44,15 +48,31 @@ export function emit(kind: string, data: Record<string, unknown> = {}, env: Node
     return;
   }
   try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
     const record: ActivationEvent = { ts: Date.now() / 1000, kind, ...data };
     const line = JSON.stringify(record) + '\n';
     if (Buffer.byteLength(line, 'utf8') > MAX_RECORD_BYTES) {
       return; // one runaway record must not blow the log's budget
     }
-    fs.appendFileSync(file, line, 'utf8');
-    if (fs.statSync(file).size > MAX_BYTES) {
-      trim(file);
+    // The log names what the agent knows, so it is private to the user (0700 dir, 0600 file).
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    const append = () => {
+      fs.appendFileSync(file, line, { encoding: 'utf8', mode: 0o600 });
+      ensurePrivate(file);
+      appendsSinceLineCheck += 1;
+      const overBytes = fs.statSync(file).size > MAX_BYTES;
+      const checkLines = appendsSinceLineCheck >= LINE_CHECK_EVERY;
+      if (checkLines) {
+        appendsSinceLineCheck = 0;
+      }
+      if (overBytes || (checkLines && countLines(file) > MAX_LINES)) {
+        trim(file);
+      }
+    };
+    // Several Reverie processes (stdio + serve) may share one log: append and trim under a lock so
+    // a trim never drops another process's append. If the lock cannot be taken, append anyway
+    // (O_APPEND is atomic) and leave trimming to a later call.
+    if (!withLock(file, append)) {
+      fs.appendFileSync(file, line, { encoding: 'utf8', mode: 0o600 });
     }
   } catch (error) {
     if (!warned) {
@@ -62,9 +82,65 @@ export function emit(kind: string, data: Record<string, unknown> = {}, env: Node
   }
 }
 
-/** Keep the newest records that fit both caps: at most MAX_LINES lines and MAX_BYTES / 2 bytes (so trims stay rare). */
+function ensurePrivate(file: string): void {
+  try {
+    if ((fs.statSync(file).mode & 0o077) !== 0) {
+      fs.chmodSync(file, 0o600);
+    }
+  } catch {
+    // best effort (e.g. filesystems without POSIX modes)
+  }
+}
+
+function countLines(file: string): number {
+  return fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).length;
+}
+
+function sleepMs(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Cross-process lock via an exclusive lock file; stale locks (a crashed holder) are broken after LOCK_STALE_MS. */
+function withLock(file: string, fn: () => void): boolean {
+  const lock = `${file}.lock`;
+  for (let attempt = 0; attempt < LOCK_TRIES; attempt += 1) {
+    let fd: number;
+    try {
+      fd = fs.openSync(lock, 'wx', 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        return false;
+      }
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lock);
+          continue;
+        }
+      } catch {
+        continue; // the holder released it between our checks
+      }
+      sleepMs(10);
+      continue;
+    }
+    try {
+      fn();
+      return true;
+    } finally {
+      fs.closeSync(fd);
+      try {
+        fs.unlinkSync(lock);
+      } catch {
+        // already gone
+      }
+    }
+  }
+  return false;
+}
+
+/** Keep the newest records that fit both caps: at most MAX_LINES lines and MAX_BYTES / 2 bytes (so trims stay rare). Call under the lock. */
 function trim(file: string): void {
-  const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).slice(-MAX_LINES);
+  // Keep a margin under MAX_LINES so the count never exceeds the cap between line checks.
+  const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).slice(-(MAX_LINES - LINE_CHECK_EVERY));
   const budget = MAX_BYTES / 2;
   let bytes = lines.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0);
   let start = 0;
@@ -73,8 +149,8 @@ function trim(file: string): void {
     start += 1;
   }
   const kept = lines.slice(start);
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '', 'utf8');
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, kept.length ? kept.join('\n') + '\n' : '', { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 

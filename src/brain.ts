@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import neo4j from 'neo4j-driver';
-import { ActivationEvent, eventsPath, expandHome, tail } from './events.js';
+import { ActivationEvent, MAX_LINES, eventsPath, expandHome, tail } from './events.js';
 
 export interface BrainNode {
   id: string;
@@ -229,32 +229,53 @@ export async function snapshot(run: Run, limit = DEFAULT_LIMIT): Promise<BrainSn
   };
 }
 
-/** What changed between two snapshots: added/updated/removed nodes and added/removed relationships. */
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * What changed between two snapshots. Nodes count as updated when any exposed field differs
+ * (not just degree or the rounded timestamp); a changed relationship is a removal plus an
+ * addition, since the contract has no "relsUpdated"; `stats` is set only when the totals changed.
+ */
 export function diffSnapshot(prev: BrainSnapshot, curr: BrainSnapshot): BrainDiff {
   const prevNodes = new Map(prev.nodes.map((node) => [node.id, node]));
   const currNodes = new Map(curr.nodes.map((node) => [node.id, node]));
   const prevRels = new Map(prev.rels.map((rel) => [rel.id, rel]));
   const currRels = new Map(curr.rels.map((rel) => [rel.id, rel]));
-  return {
+  const changedRels = curr.rels.filter((rel) => {
+    const before = prevRels.get(rel.id);
+    return before !== undefined && !same(before, rel);
+  });
+  const diff: BrainDiff = {
     nodesAdded: curr.nodes.filter((node) => !prevNodes.has(node.id)),
     nodesUpdated: curr.nodes.filter((node) => {
       const before = prevNodes.get(node.id);
-      return before !== undefined && (before.updatedAt !== node.updatedAt || before.degree !== node.degree);
+      return before !== undefined && !same(before, node);
     }),
     nodesRemoved: prev.nodes.filter((node) => !currNodes.has(node.id)).map((node) => node.id),
-    relsAdded: curr.rels.filter((rel) => !prevRels.has(rel.id)),
-    relsRemoved: prev.rels.filter((rel) => !currRels.has(rel.id)).map((rel) => rel.id)
+    relsAdded: [...curr.rels.filter((rel) => !prevRels.has(rel.id)), ...changedRels],
+    relsRemoved: [...prev.rels.filter((rel) => !currRels.has(rel.id)).map((rel) => rel.id), ...changedRels.map((rel) => rel.id)]
   };
+  if (!same(prev.stats, curr.stats)) {
+    diff.stats = curr.stats;
+  }
+  return diff;
 }
 
+/** A diff with nothing to apply: no node or relationship changes and no changed totals. */
 export function isEmptyDiff(diff: BrainDiff): boolean {
   return (
     diff.nodesAdded.length === 0 &&
     diff.nodesUpdated.length === 0 &&
     diff.nodesRemoved.length === 0 &&
     diff.relsAdded.length === 0 &&
-    diff.relsRemoved.length === 0
+    diff.relsRemoved.length === 0 &&
+    diff.stats === undefined
   );
+}
+
+/** The whole snapshot expressed as a diff against nothing: what a fresh stream sends first. */
+export function snapshotAsDiff(snap: BrainSnapshot): BrainDiff {
+  return { nodesAdded: snap.nodes, nodesUpdated: [], nodesRemoved: [], relsAdded: snap.rels, relsRemoved: [], stats: snap.stats };
 }
 
 /** Newest dream diary entry (*.md in REVERIE_DREAMS_DIR) by modification time; null when the variable is unset. */
@@ -374,7 +395,7 @@ export function presenceStats(env: NodeJS.ProcessEnv = process.env): PresenceSta
 export function state(events?: ActivationEvent[], now?: number, env: NodeJS.ProcessEnv = process.env): BrainState {
   const at = now ?? Date.now() / 1000;
   const file = eventsPath(env);
-  const list = events ?? (file ? tail(file, 200) : []);
+  const list = events ?? (file ? tail(file, MAX_LINES) : []); // the whole retained log, so windows are never truncated
   const ts = (event: ActivationEvent) => (typeof event.ts === 'number' && Number.isFinite(event.ts) ? event.ts : 0);
   const newest = (kind?: string) =>
     list.filter((event) => kind === undefined || event.kind === kind).reduce<number | null>((max, event) => (max === null || ts(event) > max ? ts(event) : max), null);

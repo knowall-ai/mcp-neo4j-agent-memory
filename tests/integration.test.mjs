@@ -316,8 +316,11 @@ test('reverie serve: MCP over HTTP, brain snapshot and live events', async () =>
     assert.ok(stream.events.some((e) => e.event === 'activation' && e.data.kind === 'remember' && e.data.name === 'Brain Test'));
     assert.ok(stream.events.some((e) => e.event === 'activation' && e.data.kind === 'connect'));
     assert.ok(kinds.includes('state'));
-    const diff = stream.events.find((e) => e.event === 'graph');
-    assert.ok(diff, `expected a graph diff, got ${kinds.join(',')}`);
+    const graphs = stream.events.filter((e) => e.event === 'graph');
+    assert.ok(graphs.length >= 2, `expected the initial snapshot and a diff, got ${kinds.join(',')}`);
+    assert.ok(graphs[0].data.nodesAdded.some((n) => n.name === 'Brain Test'), 'first graph frame is the full snapshot');
+    assert.ok(graphs[0].data.relsAdded.some((r) => r.type === 'KNOWS'));
+    const diff = graphs.find((e) => e.data.nodesAdded.some((n) => n.name === 'Brain Stream'));
     assert.ok(diff.data.nodesAdded.some((n) => n.name === 'Brain Stream' && n.label === 'Project'));
     assert.ok(diff.data.stats && diff.data.stats.labels.Project >= 1);
     assert.ok(second && (await second).ok);

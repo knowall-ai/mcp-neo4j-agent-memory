@@ -539,6 +539,7 @@ REVERIE_SERVE_TOKEN=$(openssl rand -hex 24) NEO4J_PASSWORD=… reverie serve
 |---|---|---|
 | `REVERIE_SERVE_TOKEN` | (required) | Bearer token clients must send as `Authorization: Bearer …` |
 | `REVERIE_HTTP_HOST` / `REVERIE_HTTP_PORT` | `127.0.0.1` / `8643` | Bind address; keep it on loopback behind a reverse proxy |
+| `REVERIE_ALLOWED_ORIGINS` | none | Comma-separated browser origins allowed to call the API; requests carrying any other `Origin` header get 403 (server-to-server clients send none) |
 | `REVERIE_EVENTS_PATH` | `~/.reverie/events.jsonl` | Activation log (see below); empty string disables it |
 | `REVERIE_DREAMS_DIR` | unset | Optional dream diary folder (`*.md`); the newest file names the last dream |
 | `REVERIE_USAGE_STATS_PATH` / `REVERIE_BOOST_STATE_PATH` | `~/call-transcripts/usage-stats.json` / `boost-state.json` | Presence HUD files passed through in `state` (usage only when written within 15 min) |
@@ -561,8 +562,8 @@ the server.
 **Activation log.** Every `search_memories` (`recall`), `create_memory` / `update_memory`
 (`remember`), `create_connection` / `update_connection` (`connect`), `delete_*` (`forget`) and real
 `dream` run (`dream.start` / `dream.end`) appends one JSON line to `REVERIE_EVENTS_PATH`, whichever
-transport served it. It holds ids, names and search terms only, is capped at 5 MB / 5,000 lines, and
-is what makes the Brain view light up. The graph itself never records what was looked at.
+transport served it. It holds ids, names and search terms only, is private to the user (mode 0600), is capped at
+5 MB / 5,000 lines, and is what makes the Brain view light up. The graph itself never records what was looked at.
 
 Behind Caddy on an agent's VM:
 

@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { emit, eventsPath, readSince, tail, MAX_BYTES } from '../build/events.js';
-import { parseLimit, cleanProps, clampLimit, diffSnapshot, isEmptyDiff, presenceStats, state, toEpochSeconds, MAX_LIMIT } from '../build/brain.js';
+import { snapshotAsDiff, parseLimit, cleanProps, clampLimit, diffSnapshot, isEmptyDiff, presenceStats, state, toEpochSeconds, MAX_LIMIT } from '../build/brain.js';
 import { isAuthorized } from '../build/http-server.js';
 import { neo4jConfigError, neo4jConfigFromEnv } from '../build/config.js';
 
@@ -239,6 +239,15 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     assert.ok(fs.statSync(big).size <= MAX_BYTES / 2, `trimmed file is byte-bounded (${fs.statSync(big).size} bytes)`);
     emit('recall', { pad: 'z'.repeat(70 * 1024) }, { REVERIE_EVENTS_PATH: big });
     assert.ok(!fs.readFileSync(big, 'utf8').includes('zzzz'), 'a record over 64 KiB is refused');
+    // the line cap holds on its own, even when the byte cap is nowhere near
+    const many = path.join(dir, 'many.jsonl');
+    for (let i = 0; i < 5400; i++) emit('recall', { i }, { REVERIE_EVENTS_PATH: many });
+    assert.ok(fs.readFileSync(many, 'utf8').split('\n').filter(Boolean).length <= 5000, 'line cap enforced without the byte cap');
+    assert.ok(!fs.existsSync(`${many}.lock`), 'lock released');
+    if (process.platform !== 'win32') {
+      assert.strictEqual(fs.statSync(many).mode & 0o777, 0o600, 'log is private');
+      assert.strictEqual(fs.statSync(path.dirname(file)).mode & 0o777, 0o700, 'log dir is private');
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
@@ -287,6 +296,21 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     assert.deepStrictEqual(diff.relsRemoved, ['r2']);
     assert.strictEqual(isEmptyDiff(diff), false);
     assert.strictEqual(isEmptyDiff(diffSnapshot(curr, curr)), true);
+    assert.strictEqual(diff.stats, undefined, 'unchanged totals are not repeated');
+    // a same-second property change still counts as an update
+    const renamed = { ...curr, nodes: curr.nodes.map((n) => (n.id === '1' ? { ...n, props: { role: 'x' } } : n)) };
+    assert.deepStrictEqual(diffSnapshot(curr, renamed).nodesUpdated.map((n) => n.id), ['1']);
+    // a changed relationship is a removal plus an addition
+    const retimed = { ...curr, rels: curr.rels.map((r) => (r.id === 'r1' ? { ...r, updatedAt: 99 } : r)) };
+    const rd = diffSnapshot(curr, retimed);
+    assert.deepStrictEqual([rd.relsRemoved, rd.relsAdded.map((r) => r.id)], [['r1'], ['r1']]);
+    // totals-only changes are not empty
+    const counted = { ...curr, stats: { ...stats, nodeCount: 9 } };
+    const sd = diffSnapshot(curr, counted);
+    assert.strictEqual(isEmptyDiff(sd), false);
+    assert.strictEqual(sd.stats.nodeCount, 9);
+    const first = snapshotAsDiff(curr);
+    assert.deepStrictEqual([first.nodesAdded.length, first.relsAdded.length, first.stats], [3, 2, stats]);
   }
   {
     const now = 1_000_000;
@@ -315,6 +339,13 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
     const ended = state([...events, { ts: now - 100, kind: 'dream.end', name: 'dream-1' }], now, quiet);
     assert.strictEqual(ended.dreaming, false);
     assert.strictEqual(ended.lastDreamAt, now - 100);
+    const busy = [{ ts: now - 100, kind: 'dream.start', name: 'd' }, ...Array.from({ length: 250 }, (_, i) => ({ ts: now - 90 + i * 0.1, kind: 'recall' }))];
+    const busyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverie-busy-'));
+    fs.writeFileSync(path.join(busyDir, 'e.jsonl'), busy.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const fromFile = state(undefined, now, { ...quiet, REVERIE_EVENTS_PATH: path.join(busyDir, 'e.jsonl') });
+    assert.strictEqual(fromFile.dreaming, true, 'a dream.start behind 250 recalls is still seen');
+    assert.strictEqual(fromFile.recentReads, 250);
+    fs.rmSync(busyDir, { recursive: true, force: true });
     const stale = state([{ ts: now - 3600, kind: 'dream.start', name: 'old' }], now, quiet);
     assert.strictEqual(stale.dreaming, false, 'a dream.start older than 30 min is not dreaming');
     assert.strictEqual(stale.lastDreamName, 'old');

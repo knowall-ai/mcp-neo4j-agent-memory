@@ -54,6 +54,18 @@ test('serve rejects a malformed port', async () => {
   assert.match(stderr, /REVERIE_HTTP_PORT/);
 });
 
+test('serve accepts a listed Origin', async () => {
+  const token = 'origin-token';
+  const serve = await startServe({ REVERIE_SERVE_TOKEN: token, REVERIE_EVENTS_PATH: '', REVERIE_ALLOWED_ORIGINS: 'https://portal.example, https://other.example' });
+  try {
+    const listed = await fetch(`${serve.url}/brain/state`, { headers: { Authorization: `Bearer ${token}`, Origin: 'https://Portal.example' } });
+    assert.equal(listed.status, 503, 'passes the origin check (fails later only because Neo4j is unconfigured)');
+    assert.equal((await fetch(`${serve.url}/brain/state`, { headers: { Authorization: `Bearer ${token}`, Origin: 'https://evil.example' } })).status, 403);
+  } finally {
+    await serve.close();
+  }
+});
+
 test('serve refuses a partial Neo4j configuration', async () => {
   const { code, stderr } = await runServe({ REVERIE_SERVE_TOKEN: 't', NEO4J_URI: 'bolt://localhost:7687' });
   assert.equal(code, 1);
@@ -89,6 +101,8 @@ test('serve without Neo4j: health, auth, 404, 503 and MCP over HTTP', async () =
     const huge = await fetch(`${serve.url}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: `{"pad":"${'x'.repeat(1024 * 1024 + 10)}"}` });
     assert.equal(huge.status, 413);
     assert.equal((await fetch(`${serve.url}/mcp`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` } })).status, 405);
+    const foreign = await fetch(`${serve.url}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Origin: 'https://untrusted.example' }, body: JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'tools/list', params: {} }) });
+    assert.equal(foreign.status, 403, 'an unlisted browser Origin is rejected even with a valid bearer');
   } finally {
     const { signal, code } = await serve.close();
     assert.ok(signal === 'SIGTERM' || code === 0, 'shuts down on SIGTERM');
