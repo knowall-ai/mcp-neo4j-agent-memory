@@ -126,11 +126,16 @@ async function runTest(config) {
     if (config.shouldStart) {
       setTimeout(() => {
         if (!processExited) {
-          // Server is still running, that's good
+          // Server is still running, that's good. Stop it and wait for it to close (bounded) so the
+          // next configuration never starts while this child is still alive.
           expectedExit = true;
+          const killTimer = setTimeout(() => child.kill('SIGKILL'), 3000);
+          child.once('close', () => {
+            clearTimeout(killTimer);
+            console.log('   ✅ Server started successfully');
+            resolve(true);
+          });
           child.kill();
-          console.log('   ✅ Server started successfully');
-          resolve(true);
         }
       }, 2000);
     }
