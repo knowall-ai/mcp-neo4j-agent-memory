@@ -490,9 +490,10 @@ NEO4J_URI=bolt://127.0.0.1:17687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=test-passwo
   REVERIE_TEST_DESTRUCTIVE=1 npm run test:coverage
 ```
 
-`REVERIE_TEST_DESTRUCTIVE=1` is the explicit opt-in: without it the suite refuses to run, so a
-configured production graph can never be wiped by `npm test`. The suite waits up to a minute for
-authenticated Bolt before starting, and a remote `NEO4J_URI` must use `bolt+s://` or `neo4j+s://`.
+`REVERIE_TEST_DESTRUCTIVE=1` is the explicit opt-in: without it the suite refuses to run. With it,
+the suite wipes whatever `NEO4J_URI` points at, so only set it alongside a disposable database.
+The suite waits up to a minute for authenticated Bolt before starting, and a remote `NEO4J_URI`
+must use `bolt+s://` or `neo4j+s://` with a validated certificate (`+ssc` is refused).
 
 CI runs the same suite against a Neo4j service container on every pull request and fails the
 build if coverage drops below the gate. The first semantic search downloads the local embedding

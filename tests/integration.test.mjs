@@ -16,12 +16,13 @@ if (!password) {
 if (process.env.REVERIE_TEST_DESTRUCTIVE !== '1') {
   throw new Error('Refusing to run: the integration tests wipe the target database. Point NEO4J_URI at a disposable Neo4j and set REVERIE_TEST_DESTRUCTIVE=1.');
 }
-// Credentials only travel in the clear to loopback; anything remote must use an encrypted scheme.
+// Credentials only travel in the clear to loopback; anything remote must use an encrypted scheme
+// with certificate validation (`+ssc` trusts any certificate, so it is refused too).
 {
   const parsed = new URL(uri);
   const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
-  if (!loopback && !/^(bolt|neo4j)\+s(sc)?:$/.test(parsed.protocol)) {
-    throw new Error(`NEO4J_URI ${uri} is remote and unencrypted; use bolt+s:// or neo4j+s://`);
+  if (!loopback && !/^(bolt|neo4j)\+s:$/.test(parsed.protocol)) {
+    throw new Error(`NEO4J_URI ${uri} is remote; use bolt+s:// or neo4j+s:// (validated certificates only)`);
   }
 }
 
