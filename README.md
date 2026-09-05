@@ -1,10 +1,8 @@
-[![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
-
 # Reverie — graph memory that dreams
 
 **Reverie** is KnowAll AI's Neo4j knowledge-graph memory for AI agents, served over MCP. Until `@knowall-ai/reverie` is published to npm, install the legacy package `@knowall-ai/mcp-neo4j-agent-memory` (0.2.x). The GitHub repository is now `knowall-ai/mcp-reverie`, and old URLs redirect.
 
-![Reverie Banner](./images/neo4j-agent-memory-05.png)
+![Reverie — graph memory that dreams](./images/reverie-banner.png)
 
 A specialized MCP server that bridges Neo4j graph database with AI agents, providing memory-focused tools for storing, recalling, and connecting information in a knowledge graph.
 
@@ -133,7 +131,6 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 
 ### Installing via Smithery
 
-[![smithery badge](https://smithery.ai/badge/@knowall-ai/mcp-neo4j-agent-memory)](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory)
 
 To install Reverie for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@knowall-ai/mcp-neo4j-agent-memory):
 
