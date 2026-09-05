@@ -1,0 +1,27 @@
+name: gitleaks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0   # full history: secrets committed and later removed must still be found
+      - name: Install and run gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o checksums.txt
+          # require the exact entry for our archive; a checksums file that omits it must fail, not pass
+          grep -E " gitleaks_${GITLEAKS_VERSION}_linux_x64\.tar\.gz$" checksums.txt > archive.sha256
+          sha256sum --check --strict archive.sha256
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+          ./gitleaks git . --no-banner --redact --exit-code 1

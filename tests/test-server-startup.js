@@ -88,6 +88,7 @@ async function runTest(config) {
     let stdout = '';
     let stderr = '';
     let processExited = false;
+    let expectedExit = false; // set just before we kill a server that started correctly
     
     child.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -101,15 +102,13 @@ async function runTest(config) {
       processExited = true;
       
       if (config.shouldStart) {
-        if (code === 0 || stderr.includes('Neo4j MCP server running on stdio')) {
-          console.log('   ✅ Server started successfully');
-          resolve(true);
-        } else {
-          console.log('   ❌ Server failed to start');
-          console.log('   Exit code:', code);
-          console.log('   Stderr:', stderr);
-          resolve(false);
-        }
+        if (expectedExit) return; // our own kill after a successful start
+        // A server that is expected to start must still be running when the startup interval
+        // ends; any exit before then, even a clean one, is a failure.
+        console.log('   ❌ Server exited before the startup interval ended');
+        console.log('   Exit code:', code);
+        console.log('   Stderr:', stderr);
+        resolve(false);
       } else {
         if (code !== 0 && config.expectedError && stderr.includes(config.expectedError)) {
           console.log(`   ✅ Server correctly failed with expected error: "${config.expectedError}"`);
@@ -127,10 +126,16 @@ async function runTest(config) {
     if (config.shouldStart) {
       setTimeout(() => {
         if (!processExited) {
-          // Server is still running, that's good
+          // Server is still running, that's good. Stop it and wait for it to close (bounded) so the
+          // next configuration never starts while this child is still alive.
+          expectedExit = true;
+          const killTimer = setTimeout(() => child.kill('SIGKILL'), 3000);
+          child.once('close', () => {
+            clearTimeout(killTimer);
+            console.log('   ✅ Server started successfully');
+            resolve(true);
+          });
           child.kill();
-          console.log('   ✅ Server started successfully');
-          resolve(true);
         }
       }, 2000);
     }
