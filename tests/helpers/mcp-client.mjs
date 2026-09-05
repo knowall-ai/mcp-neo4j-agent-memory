@@ -19,6 +19,14 @@ export class McpClient {
     this.child.stderr.on('data', (chunk) => { this.stderr += chunk.toString(); });
     this.child.stdout.on('data', (chunk) => this.onData(chunk));
     this.exited = new Promise((resolve) => this.child.once('close', resolve));
+    const settle = (reason) => {
+      for (const [id, waiter] of this.pending) {
+        this.pending.delete(id);
+        waiter.reject(new Error(`server ${reason} before answering request ${id}`));
+      }
+    };
+    this.child.once('close', (code, signal) => settle(`exited (code ${code}, signal ${signal})`));
+    this.child.once('error', (error) => settle(`errored: ${error.message}`));
   }
 
   onData(chunk) {
@@ -45,7 +53,10 @@ export class McpClient {
         this.pending.delete(id);
         reject(new Error(`timeout waiting for ${method} (${id})`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: (m) => { clearTimeout(timer); resolve(m); } });
+      this.pending.set(id, {
+        resolve: (m) => { clearTimeout(timer); resolve(m); },
+        reject: (e) => { clearTimeout(timer); reject(e); }
+      });
       this.child.stdin.write(JSON.stringify(message) + '\n');
     });
   }

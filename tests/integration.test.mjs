@@ -11,6 +11,19 @@ const password = process.env.NEO4J_PASSWORD;
 if (!password) {
   throw new Error('NEO4J_PASSWORD is required for the integration tests');
 }
+// This suite wipes the database it points at. It refuses to run without an explicit opt-in so a
+// developer's real graph can never be erased by `npm test`.
+if (process.env.REVERIE_TEST_DESTRUCTIVE !== '1') {
+  throw new Error('Refusing to run: the integration tests wipe the target database. Point NEO4J_URI at a disposable Neo4j and set REVERIE_TEST_DESTRUCTIVE=1.');
+}
+// Credentials only travel in the clear to loopback; anything remote must use an encrypted scheme.
+{
+  const parsed = new URL(uri);
+  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+  if (!loopback && !/^(bolt|neo4j)\+s(sc)?:$/.test(parsed.protocol)) {
+    throw new Error(`NEO4J_URI ${uri} is remote and unencrypted; use bolt+s:// or neo4j+s://`);
+  }
+}
 
 const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
 async function cypher(query, params = {}) {
@@ -20,8 +33,21 @@ async function cypher(query, params = {}) {
 }
 async function wipe() { await cypher('MATCH (n) DETACH DELETE n'); }
 
+/** Bounded readiness: authenticated Bolt must answer within ~60s or the suite fails fast. */
+async function waitForBolt(deadlineMs = 60000) {
+  const started = Date.now();
+  for (;;) {
+    try { await driver.verifyConnectivity(); return; }
+    catch (error) {
+      if (Date.now() - started > deadlineMs) throw new Error(`Neo4j at ${uri} not ready after ${deadlineMs / 1000}s: ${error.message}`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
 let mcp;
 before(async () => {
+  await waitForBolt();
   await wipe();
   mcp = new McpClient({
     NEO4J_URI: uri, NEO4J_USERNAME: user, NEO4J_PASSWORD: password,

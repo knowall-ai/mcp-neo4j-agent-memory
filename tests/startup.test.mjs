@@ -9,19 +9,22 @@ function run(env) {
     const child = spawn('node', [SERVER_ENTRY], { env: { PATH: process.env.PATH, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += d; });
-    const timer = setTimeout(() => child.kill(), 5000);
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, stderr }); });
+    let killed = false;
+    const timer = setTimeout(() => { killed = true; child.kill(); }, 5000);
+    child.on('close', (code, signal) => { clearTimeout(timer); resolve({ code, signal, killed, stderr }); });
   });
 }
 
 test('refuses to start when NEO4J_PASSWORD is missing', async () => {
-  const { code, stderr } = await run({ NEO4J_URI: 'bolt://localhost:7687', NEO4J_USERNAME: 'neo4j' });
-  assert.notEqual(code, 0);
+  const { code, killed, stderr } = await run({ NEO4J_URI: 'bolt://localhost:7687', NEO4J_USERNAME: 'neo4j' });
+  assert.equal(killed, false, 'server kept running instead of refusing to start');
+  assert.ok(Number.isInteger(code) && code !== 0, `expected a non-zero exit, got ${code}`);
   assert.match(stderr, /NEO4J_PASSWORD/);
 });
 
 test('refuses to start when NEO4J_URI is missing', async () => {
-  const { code, stderr } = await run({ NEO4J_USERNAME: 'neo4j', NEO4J_PASSWORD: 'x' });
-  assert.notEqual(code, 0);
+  const { code, killed, stderr } = await run({ NEO4J_USERNAME: 'neo4j', NEO4J_PASSWORD: 'x' });
+  assert.equal(killed, false, 'server kept running instead of refusing to start');
+  assert.ok(Number.isInteger(code) && code !== 0, `expected a non-zero exit, got ${code}`);
   assert.match(stderr, /NEO4J_URI/);
 });
