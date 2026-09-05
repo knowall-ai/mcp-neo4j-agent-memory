@@ -37,8 +37,16 @@ jobs:
               echo "::error::PR body must contain a 'Fixes #nnn' line for feat/fix/perf/refactor PRs."; fail=1
             fi
           fi
-          if ! echo "$PR_BODY" | grep -Eq '^## Test plan'; then
+          # The template inserts the heading, so require real content under it (comments stripped);
+          # "N/A" alone is not a plan, it needs a reason.
+          body_clean=$(printf '%s' "${PR_BODY:-}" | perl -0pe 's/<!--.*?-->//gs')
+          plan=$(printf '%s\n' "$body_clean" | awk '/^## Test plan/{flag=1; next} /^## /{flag=0} flag' | tr -d '[:space:]')
+          if ! printf '%s' "$body_clean" | grep -Eq '^## Test plan'; then
             echo "::error::PR body must include a '## Test plan' section."; fail=1
+          elif [ -z "$plan" ]; then
+            echo "::error::The '## Test plan' section is empty; describe how the change was verified."; fail=1
+          elif printf '%s' "$plan" | grep -Eqi '^(n/?a|none)[[:punct:]]*$'; then
+            echo "::error::'N/A' needs a reason (e.g. 'N/A — documentation only')."; fail=1
           fi
           [ "$fail" -ne 0 ] && exit 1
           echo "PR lint passed."
