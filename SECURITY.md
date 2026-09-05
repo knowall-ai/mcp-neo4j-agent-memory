@@ -11,8 +11,10 @@ report anything you find, and please do it privately.
 - Preferred: use GitHub's private vulnerability reporting on this repository
   (**Security → Report a vulnerability**). It creates a proposed advisory that only you and the
   repository's security managers can see.
-- Otherwise: email **support@knowall.ai**. If you need to encrypt, say so in a first message and
-  we will send a key.
+- Otherwise: email **support@knowall.ai** with the subject line `Security: mcp-reverie`.
+  **Put no vulnerability details in the first message.** Say only that you have a security
+  report and ask for an encryption key; we will reply with a PGP public key and a named contact,
+  and you send the details encrypted.
 
 Include what you can: the version or commit, the component (MCP server, Hermes plugin, brain
 API, Dreaming), steps to reproduce, and the impact you believe it has. A minimal proof of concept
