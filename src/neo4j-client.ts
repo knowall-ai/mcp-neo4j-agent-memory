@@ -103,6 +103,12 @@ export class Neo4jClient {
     params: Neo4jQueryParams,
     options: { limit: number; timeoutMs: number }
   ): Promise<T[]> {
+    if (!Number.isSafeInteger(options.limit) || options.limit < 0) {
+      throw new Error('Query limit must be a non-negative integer');
+    }
+    if (options.limit === 0) {
+      return [];
+    }
     const session: Session = this.driver.session({
       database: this.database,
       defaultAccessMode: neo4j.session.READ

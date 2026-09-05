@@ -13,7 +13,7 @@ function approxEqual(actual, expected, epsilon = 1e-9) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} ≈ ${expected}`);
 }
 
-try {
+(async () => { try {
   approxEqual(cosine([1, 0, 0], [1, 0, 0]), 1);
   approxEqual(cosine([1, 0], [0, 1]), 0);
 
@@ -163,6 +163,21 @@ try {
   assert.strictEqual(isQueryMemoriesArgs({ cypher: 'RETURN 1', params: { a: 1 } }), true);
   assert.strictEqual(isQueryMemoriesArgs({ cypher: 'RETURN 1', params: [1] }), false);
 
+  // a provider that returns fewer vectors than inputs must fail loudly, not shift later pairs
+  {
+    const realFetch = globalThis.fetch;
+    const reply = (body) => async () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    globalThis.fetch = reply({ data: [{ index: 0, embedding: [1, 0] }] });
+    try {
+      const embedder = createEmbedder({ REVERIE_EMBEDDINGS: 'openai', OPENAI_API_KEY: 'test' });
+      await assert.rejects(embedder.embed(['a', 'b']), /returned 1 vectors for 2 inputs/);
+      globalThis.fetch = reply({ data: [{ index: 1, embedding: [0, 1] }, { index: 0, embedding: [1, 0] }] });
+      assert.deepStrictEqual(await embedder.embed(['a', 'b']), [[1, 0], [0, 1]], 'out-of-order indices are honoured');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
   // provider endpoints must be https unless loopback
   assert.strictEqual(secureEndpoint('https://api.openai.com/v1/', 'X'), 'https://api.openai.com/v1');
   assert.strictEqual(secureEndpoint('http://localhost:8080/v1', 'X'), 'http://localhost:8080/v1');
@@ -172,4 +187,4 @@ try {
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
-}
+} })();

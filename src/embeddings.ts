@@ -63,6 +63,14 @@ export function secureEndpoint(raw: string, name: string): string {
   return url.toString().replace(/\/$/, '');
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
 /** Credentials never follow a redirect (a cross-origin or https→http hop would leak them); every request is bounded by timeoutMs. */
 async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
   const controller = new AbortController();
@@ -91,10 +99,26 @@ async function embedRemote(
   for (let index = 0; index < texts.length; index += 64) {
     const batch = texts.slice(index, index + 64);
     const batchVectors = await doRequest(batch);
+    // Vectors are paired back to inputs by position, so a short batch would shift every later pair.
+    if (batchVectors.length !== batch.length) {
+      throw new Error(`Embedding provider returned ${batchVectors.length} vectors for ${batch.length} inputs`);
+    }
     vectors.push(...batchVectors);
   }
 
   return vectors;
+}
+
+/** OpenAI-style `{ data: [{ index, embedding }] }`: order by the declared index, not array position. */
+function vectorsFromData(data: unknown): number[][] {
+  if (!Array.isArray(data)) {
+    return [];
+  }
+  const items = data as Array<{ index?: unknown; embedding?: unknown }>;
+  const ordered = items.every((item) => typeof item.index === 'number')
+    ? [...items].sort((a, b) => (a.index as number) - (b.index as number))
+    : items;
+  return ordered.map((item) => normalizeVector(item.embedding));
 }
 
 function normalizeVector(value: unknown): number[] {
@@ -129,13 +153,20 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
         }
 
         if (!extractorPromise) {
-          extractorPromise = (async () => {
+          // Loading may download the model; bound it, and forget a failed load so a later
+          // call can retry instead of falling back to keyword search until the process restarts.
+          const loading = (async () => {
             const transformers: any = await import('@huggingface/transformers');
             if (env.REVERIE_MODEL_CACHE?.trim()) {
               transformers.env.cacheDir = env.REVERIE_MODEL_CACHE.trim();
             }
             return transformers.pipeline('feature-extraction', model, { dtype: 'q8' });
           })();
+          extractorPromise = withTimeout(loading, timeoutMs, `local embedding model ${model} did not load within ${timeoutMs}ms`)
+            .catch((error) => {
+              extractorPromise = null;
+              throw error;
+            });
         }
 
         const extractor = await extractorPromise;
@@ -170,9 +201,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
             },
             body: JSON.stringify({ model, input: batch })
           }, timeoutMs);
-          return Array.isArray(data.data)
-            ? data.data.map((item: { embedding: unknown }) => normalizeVector(item.embedding))
-            : [];
+          return vectorsFromData(data.data);
         });
       }
     };
@@ -212,9 +241,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
             timeoutMs
           );
 
-          return Array.isArray(data.data)
-            ? data.data.map((item: { embedding: unknown }) => normalizeVector(item.embedding))
-            : [];
+          return vectorsFromData(data.data);
         });
       }
     };
@@ -260,9 +287,7 @@ export function createEmbedder(env: NodeJS.ProcessEnv = process.env): Embedder |
           body: JSON.stringify({ model, input: batch })
         }, timeoutMs);
 
-        return Array.isArray(data.data)
-          ? data.data.map((item: { embedding: unknown }) => normalizeVector(item.embedding))
-          : [];
+        return vectorsFromData(data.data);
       });
     }
   };
