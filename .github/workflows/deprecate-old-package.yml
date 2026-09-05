@@ -1,0 +1,31 @@
+name: Deprecate old package name
+
+# One-off utility: marks @knowall-ai/mcp-neo4j-agent-memory deprecated on npm with a
+# pointer to @knowall-ai/reverie. Run manually from the Actions tab (workflow_dispatch).
+# Uses the same NPM_TOKEN automation token as release.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: Deprecation message shown by npm
+        required: true
+        default: "Renamed to @knowall-ai/reverie - install that instead"
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    name: npm deprecate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm deprecate @knowall-ai/mcp-neo4j-agent-memory "$MESSAGE"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          MESSAGE: ${{ inputs.message }}
+      - run: npm view @knowall-ai/mcp-neo4j-agent-memory deprecated
