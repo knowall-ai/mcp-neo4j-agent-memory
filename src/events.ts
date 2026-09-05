@@ -21,12 +21,10 @@ export interface ActivationEvent {
 export const MAX_BYTES = 5 * 1024 * 1024;
 export const MAX_LINES = 5000;
 export const MAX_RECORD_BYTES = 64 * 1024;
-const LINE_CHECK_EVERY = 250;
-const LOCK_STALE_MS = 5_000;
-const LOCK_TRIES = 50;
+const LOCK_STALE_MS = 60_000;
+const LOCK_WAIT_MS = 2_000;
 
 let warned = false;
-let appendsSinceLineCheck = 0;
 
 export function eventsPath(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = env.REVERIE_EVENTS_PATH;
@@ -58,21 +56,17 @@ export function emit(kind: string, data: Record<string, unknown> = {}, env: Node
     const append = () => {
       fs.appendFileSync(file, line, { encoding: 'utf8', mode: 0o600 });
       ensurePrivate(file);
-      appendsSinceLineCheck += 1;
-      const overBytes = fs.statSync(file).size > MAX_BYTES;
-      const checkLines = appendsSinceLineCheck >= LINE_CHECK_EVERY;
-      if (checkLines) {
-        appendsSinceLineCheck = 0;
-      }
-      if (overBytes || (checkLines && countLines(file) > MAX_LINES)) {
+      // Both caps are checked on every append (a newline count over a ≤5 MB file is ~1 ms), so
+      // the log never holds more than MAX_LINES lines or MAX_BYTES bytes after a write returns.
+      if (fs.statSync(file).size > MAX_BYTES || countLines(file) > MAX_LINES) {
         trim(file);
       }
     };
-    // Several Reverie processes (stdio + serve) may share one log: append and trim under a lock so
-    // a trim never drops another process's append. If the lock cannot be taken, append anyway
-    // (O_APPEND is atomic) and leave trimming to a later call.
+    // Several Reverie processes (stdio + serve) may share one log: append and trim run under a
+    // lock so a trim never drops another process's append. Never append outside the lock; if it
+    // cannot be taken within LOCK_WAIT_MS the event is dropped and reported once.
     if (!withLock(file, append)) {
-      fs.appendFileSync(file, line, { encoding: 'utf8', mode: 0o600 });
+      throw new Error('activation log lock not acquired');
     }
   } catch (error) {
     if (!warned) {
@@ -93,17 +87,38 @@ function ensurePrivate(file: string): void {
 }
 
 function countLines(file: string): number {
-  return fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).length;
+  const buffer = fs.readFileSync(file);
+  let count = 0;
+  for (let i = 0; i < buffer.length; i += 1) {
+    if (buffer[i] === 10) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function sleepMs(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-/** Cross-process lock via an exclusive lock file; stale locks (a crashed holder) are broken after LOCK_STALE_MS. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'; // exists, not ours
+  }
+}
+
+/**
+ * Cross-process lock via an exclusive lock file holding the owner's pid. A lock is only broken
+ * when its owner is gone, or when it is older than LOCK_STALE_MS (a hung holder); an unlink is
+ * done only by the owner or by the breaker of a dead lock, never by a waiter.
+ */
 function withLock(file: string, fn: () => void): boolean {
   const lock = `${file}.lock`;
-  for (let attempt = 0; attempt < LOCK_TRIES; attempt += 1) {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  while (Date.now() < deadline) {
     let fd: number;
     try {
       fd = fs.openSync(lock, 'wx', 0o600);
@@ -112,17 +127,20 @@ function withLock(file: string, fn: () => void): boolean {
         return false;
       }
       try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
+        const owner = Number.parseInt(fs.readFileSync(lock, 'utf8').trim(), 10);
+        const age = Date.now() - fs.statSync(lock).mtimeMs;
+        if ((Number.isInteger(owner) && !processAlive(owner)) || age > LOCK_STALE_MS) {
           fs.unlinkSync(lock);
           continue;
         }
       } catch {
-        continue; // the holder released it between our checks
+        continue; // released between our checks
       }
-      sleepMs(10);
+      sleepMs(5);
       continue;
     }
     try {
+      fs.writeSync(fd, String(process.pid));
       fn();
       return true;
     } finally {
@@ -139,8 +157,7 @@ function withLock(file: string, fn: () => void): boolean {
 
 /** Keep the newest records that fit both caps: at most MAX_LINES lines and MAX_BYTES / 2 bytes (so trims stay rare). Call under the lock. */
 function trim(file: string): void {
-  // Keep a margin under MAX_LINES so the count never exceeds the cap between line checks.
-  const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).slice(-(MAX_LINES - LINE_CHECK_EVERY));
+  const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).slice(-MAX_LINES);
   const budget = MAX_BYTES / 2;
   let bytes = lines.reduce((sum, line) => sum + Buffer.byteLength(line, 'utf8') + 1, 0);
   let start = 0;
@@ -167,33 +184,51 @@ function parseLine(line: string): ActivationEvent | null {
   }
 }
 
-/** Events appended after byte `offset`, and the new offset. Tolerates a trimmed (shrunk) file. */
-export function readSince(file: string, offset: number): { events: ActivationEvent[]; offset: number } {
+/** Where a reader is in the log: byte offset within a specific file identity, and the newest event time already seen. */
+export interface LogCursor {
+  offset: number;
+  /** inode of the file the offset refers to; a trim renames a new file into place, changing it */
+  ino: number | null;
+  /** ts of the newest event delivered, so a re-read of a rewritten file skips what was already sent */
+  lastTs: number;
+}
+
+export const START_CURSOR: LogCursor = { offset: 0, ino: null, lastTs: 0 };
+
+/**
+ * Events appended since `cursor`, and the advanced cursor. Survives trims (the file is replaced,
+ * so its inode changes): the rewritten file is re-read from the start and events not newer than
+ * the last delivered one are skipped rather than replayed or lost.
+ */
+export function readSince(file: string, cursor: LogCursor): { events: ActivationEvent[]; cursor: LogCursor } {
   try {
-    return readSinceUnsafe(file, offset);
+    return readSinceUnsafe(file, cursor);
   } catch {
-    return { events: [], offset: 0 }; // removed or rotated between calls: start again next time
+    return { events: [], cursor: { ...cursor, offset: 0, ino: null } }; // removed or rotated mid-read: start again next time
   }
 }
 
-function readSinceUnsafe(file: string, offset: number): { events: ActivationEvent[]; offset: number } {
+function readSinceUnsafe(file: string, cursor: LogCursor): { events: ActivationEvent[]; cursor: LogCursor } {
   if (!fs.existsSync(file)) {
-    return { events: [], offset: 0 };
-  }
-  const size = fs.statSync(file).size;
-  const start = size < offset ? 0 : offset;
-  if (size === start) {
-    return { events: [], offset: start };
+    return { events: [], cursor: { ...cursor, offset: 0, ino: null } };
   }
   const fd = fs.openSync(file, 'r');
   try {
-    const buffer = Buffer.alloc(size - start);
+    const stat = fs.fstatSync(fd);
+    const replaced = cursor.ino !== null && stat.ino !== cursor.ino;
+    const start = replaced || stat.size < cursor.offset ? 0 : cursor.offset;
+    if (stat.size === start) {
+      return { events: [], cursor: { offset: start, ino: stat.ino, lastTs: cursor.lastTs } };
+    }
+    const buffer = Buffer.alloc(stat.size - start);
     fs.readSync(fd, buffer, 0, buffer.length, start);
     const text = buffer.toString('utf8');
     // Only consume complete lines; a partial trailing line is picked up on the next read.
     const complete = text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1);
-    const events = complete.split('\n').map(parseLine).filter((event): event is ActivationEvent => event !== null);
-    return { events, offset: start + Buffer.byteLength(complete, 'utf8') };
+    const all = complete.split('\n').map(parseLine).filter((event): event is ActivationEvent => event !== null);
+    const events = start === 0 && cursor.lastTs > 0 ? all.filter((event) => event.ts > cursor.lastTs) : all;
+    const lastTs = events.reduce((max, event) => (typeof event.ts === 'number' && event.ts > max ? event.ts : max), cursor.lastTs);
+    return { events, cursor: { offset: start + Buffer.byteLength(complete, 'utf8'), ino: stat.ino, lastTs } };
   } finally {
     fs.closeSync(fd);
   }

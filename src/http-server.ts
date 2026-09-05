@@ -10,7 +10,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { BrainSnapshot, diffSnapshot, isEmptyDiff, parseLimit, snapshot, snapshotAsDiff, state } from './brain.js';
 import { neo4jConfigError, neo4jConfigFromEnv } from './config.js';
 import { Embedder } from './embeddings.js';
-import { ActivationEvent, eventsPath, readSince, tail } from './events.js';
+import { ActivationEvent, LogCursor, START_CURSOR, eventsPath, readSince } from './events.js';
 import { Neo4jClient } from './neo4j-client.js';
 import { createMcpServer, safeCreateEmbedder } from './server.js';
 
@@ -153,10 +153,11 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
   const embedder: Embedder | null = config ? safeCreateEmbedder() : null;
   const run = neo4j ? (cypher: string, params?: Record<string, unknown>) => neo4j.executeQuery(cypher, params ?? {}) : null;
 
-  // The health probe is unauthenticated, so it is cached and coalesced: at most one Neo4j
-  // session per HEALTH_CACHE_MS no matter how many callers arrive.
+  // The health probe is unauthenticated, so it is cached and coalesced: one Neo4j query in flight
+  // at a time, tracked until it really settles (a timed-out answer does not release it), and its
+  // result cached for HEALTH_CACHE_MS. Callers wait at most HEALTH_TIMEOUT_MS and get false meanwhile.
   let healthCache: { at: number; ok: boolean } | null = null;
-  let healthInFlight: Promise<boolean> | null = null;
+  let healthQuery: Promise<boolean> | null = null;
   function neo4jHealthy(): Promise<boolean> {
     if (!neo4j) {
       return Promise.resolve(false);
@@ -164,21 +165,22 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
     if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) {
       return Promise.resolve(healthCache.ok);
     }
-    if (!healthInFlight) {
-      let timer: NodeJS.Timeout | undefined;
-      const timeout = new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), HEALTH_TIMEOUT_MS);
-        timer.unref();
-      });
-      healthInFlight = Promise.race([neo4j.executeQuery('RETURN 1 AS ok').then(() => true, () => false), timeout])
-        .finally(() => clearTimeout(timer))
+    if (!healthQuery) {
+      healthQuery = neo4j
+        .executeQuery('RETURN 1 AS ok')
+        .then(() => true, () => false)
         .then((ok) => {
           healthCache = { at: Date.now(), ok };
-          healthInFlight = null;
+          healthQuery = null;
           return ok;
         });
     }
-    return healthInFlight;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), HEALTH_TIMEOUT_MS);
+      timer.unref();
+    });
+    return Promise.race([healthQuery, timeout]).finally(() => clearTimeout(timer));
   }
 
   async function handleMcp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -241,17 +243,21 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
     };
     const queueActivations = (events: ActivationEvent[]) => {
       pending.push(...events);
+      flushPending(); // deliver what the socket will take before any cap applies
       if (pending.length > PENDING_ACTIVATIONS_MAX) {
-        pending.splice(0, pending.length - PENDING_ACTIVATIONS_MAX);
+        // A client that has not read for this long loses the oldest queued activations; say so.
+        const dropped = pending.splice(0, pending.length - PENDING_ACTIVATIONS_MAX).length;
+        pending.unshift({ ts: Date.now() / 1000, kind: 'gap', dropped });
       }
-      flushPending();
     };
     const file = eventsPath(env);
-    let offset = 0;
+    let cursor: LogCursor = START_CURSOR;
     if (file) {
-      // Recent history first so the view can light up what just happened
-      queueActivations(tail(file, 30));
-      offset = readSince(file, 0).offset;
+      // One read gives both the recent history to replay and the cursor to continue from, so no
+      // event can fall between the two.
+      const initial = readSince(file, START_CURSOR);
+      cursor = initial.cursor;
+      queueActivations(initial.events.slice(-30));
     }
     let prev: BrainSnapshot | null = null;
     let polling = false;
@@ -291,8 +297,8 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
         if (!file) {
           return;
         }
-        const next = readSince(file, offset);
-        offset = next.offset;
+        const next = readSince(file, cursor);
+        cursor = next.cursor;
         queueActivations(next.events);
       }, settings.eventPollMs),
       setInterval(() => void pollGraph(), settings.graphPollMs),
@@ -313,17 +319,33 @@ export async function startHttpServer(env: NodeJS.ProcessEnv = process.env): Pro
     const path = url.pathname.replace(/\/+$/, '') || '/';
     const method = req.method ?? 'GET';
 
+    // Browser callers: an Origin is accepted only when allowlisted, and then gets real CORS
+    // answers (preflight before auth, since browsers send preflights without credentials).
+    const origin = req.headers.origin?.trim();
+    const originAllowed = origin !== undefined && settings.allowedOrigins.has(origin.toLowerCase());
+    if (origin !== undefined && !originAllowed) {
+      sendJson(res, 403, { error: 'Origin not allowed' });
+      return;
+    }
+    if (originAllowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      if (method === 'OPTIONS') {
+        res.writeHead(204, {
+          'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version',
+          'Access-Control-Max-Age': '600'
+        });
+        res.end();
+        return;
+      }
+    }
     if ((path === '/health' || path === '/brain/health') && method === 'GET') {
       sendJson(res, 200, { ok: true, neo4j: await neo4jHealthy(), ts: Date.now() / 1000 });
       return;
     }
     if (!isAuthorized(req.headers.authorization, settings.token)) {
       sendJson(res, 401, { error: 'Unauthorized' });
-      return;
-    }
-    const origin = req.headers.origin;
-    if (origin !== undefined && !settings.allowedOrigins.has(origin.trim().toLowerCase())) {
-      sendJson(res, 403, { error: 'Origin not allowed' });
       return;
     }
     if (path === '/mcp') {

@@ -60,6 +60,14 @@ test('serve accepts a listed Origin', async () => {
   try {
     const listed = await fetch(`${serve.url}/brain/state`, { headers: { Authorization: `Bearer ${token}`, Origin: 'https://Portal.example' } });
     assert.equal(listed.status, 503, 'passes the origin check (fails later only because Neo4j is unconfigured)');
+    assert.equal(listed.headers.get('access-control-allow-origin'), 'https://Portal.example');
+    assert.equal(listed.headers.get('vary'), 'Origin');
+    const preflight = await fetch(`${serve.url}/mcp`, { method: 'OPTIONS', headers: { Origin: 'https://portal.example', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' } });
+    assert.equal(preflight.status, 204, 'preflight is answered before bearer auth');
+    assert.match(preflight.headers.get('access-control-allow-headers'), /Authorization/);
+    assert.match(preflight.headers.get('access-control-allow-methods'), /POST/);
+    assert.equal((await fetch(`${serve.url}/mcp`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } })).status, 403);
+    assert.equal((await fetch(`${serve.url}/health`)).headers.get('access-control-allow-origin'), null, 'no CORS headers without an Origin');
     assert.equal((await fetch(`${serve.url}/brain/state`, { headers: { Authorization: `Bearer ${token}`, Origin: 'https://evil.example' } })).status, 403);
   } finally {
     await serve.close();
