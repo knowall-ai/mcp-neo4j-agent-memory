@@ -7,7 +7,7 @@
         --subtitle "GRAPH MEMORY THAT DREAMS" \
         --out images/reverie-banner.png
 
-Needs Pillow. See docs/BRAND.md for the rules the defaults encode (subtitle width = wordmark
+Needs Pillow. See docs/BRANDING.adoc for the rules the defaults encode (subtitle width = wordmark
 width, subtitle height = 0.36 x wordmark height, gap = 0.60 x subtitle height, logo 11 % of the
 banner width with a 3 % margin). Sister products (e.g. PRESENCE) reuse this with their own
 wordmark cut-out and backdrop.
