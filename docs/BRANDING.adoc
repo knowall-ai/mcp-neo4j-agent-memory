@@ -63,7 +63,7 @@ The wordmark is generated, not typeset. To make a matching one for another produ
 
 . Run gpt-image-1 with *two reference images*: `docs/brand/reverie-wordmark.png` (or the full banner) for the lettering style and the product's own backdrop for the scene. Ask for "the exact same outlined neon-green display lettering, letter for letter, on a dark plate, no other text, no icons, spelling exact".
 . Key the lettering out of its dark plate (subtract the 90th-percentile border colour, alpha from luminance) to get an RGBA cut-out; re-tint the RGB toward `#22c55e` keeping luminance if it came out teal.
-. Check the proportions against REVERIE: new renders tend to come out slightly condensed, so scale the cut-out horizontally until its letters have the same extended width-to-height ratio as the REVERIE lettering (about 4.9 : 1 for seven letters). Leave the stroke weight as generated.
+. Check the proportions against REVERIE: new renders tend to come out slightly condensed, so scale the cut-out horizontally until its letters have the same extended width-to-height ratio as the REVERIE lettering (about 6.1 : 1 for the seven letters of REVERIE, ink bounding box 771 x 126 px in the cut-out). Leave the stroke weight as generated.
 . Use the compositing script below with that cut-out. The glow is baked into the render: the recipe adds no blur to the wordmark.
 
 == Layout
