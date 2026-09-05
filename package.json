@@ -23,10 +23,11 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
-    "@modelcontextprotocol/sdk": "0.6.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^17.2.0",
     "neo4j-driver": "^5.27.0",
-    "uuid": "^11.0.4"
+    "uuid": "^11.0.4",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
