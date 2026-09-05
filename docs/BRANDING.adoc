@@ -61,7 +61,8 @@ Monoline double-stroke outline (two thin parallel strokes with a dark fill betwe
 
 The wordmark is generated, not typeset. To make a matching one for another product:
 
-. Run gpt-image-1 with *two reference images*: `docs/brand/reverie-wordmark.png` (or the full banner) for the lettering style and the product's own backdrop for the scene. Ask for "the exact same outlined neon-green display lettering, letter for letter, on a dark plate, no other text, no icons, spelling exact".
+. Run *gpt-image-2* (the `gen-image` default: edits endpoint, `input_fidelity` high) with *two reference images*: `docs/brand/reverie-wordmark.png` for the lettering style and `docs/brand/reverie-wordmark-logo-a.png` (the original Logo A crop) as the second. Ask for "the exact same outlined neon-green display lettering, letter for letter, on a dark plate, no other text, no icons, spelling exact" and add the line "letters about 1.5x wider than tall, squared, thin double-stroke, dark fill". Lesson from the PRESENCE wordmark (2026-09-05): gpt-image-1 kept producing condensed letters (per-letter width-to-height about 0.5 against REVERIE's 1.2 to 1.5) whatever the prompt said, and gpt-image-1.5 came out heavier and brighter than the family; gpt-image-2 reproduced the squared extended double-stroke alphabet first time.
+. Verify the proportions with a per-letter measurement: split the lettering into glyphs on the bright core strokes (luminance above 170, gaps of 14 px or more), not on alpha, because the glow bridges neighbouring letters. Each glyph should be roughly as wide as, or wider than, it is tall.
 . Key the lettering out of its dark plate (subtract the 90th-percentile border colour, alpha from luminance) to get an RGBA cut-out; re-tint the RGB toward `#22c55e` keeping luminance if it came out teal.
 . Check the proportions against REVERIE: new renders tend to come out slightly condensed, so scale the cut-out horizontally until its letters have the same extended width-to-height ratio as the REVERIE lettering (about 6.1 : 1 for the seven letters of REVERIE, ink bounding box 771 x 126 px in the cut-out). Leave the stroke weight as generated.
 . Use the compositing script below with that cut-out. The glow is baked into the render: the recipe adds no blur to the wordmark.
@@ -116,6 +117,9 @@ link:../images/reverie-icon.png[`images/reverie-icon.png`] is the square mark fo
 
 | `brand/reverie-wordmark.png`
 | Wordmark cut-out with alpha (the only source of the lettering).
+
+| `brand/reverie-wordmark-logo-a.png`
+| The original Logo A lettering crop (950 x 220, on its dark plate); the second reference image when generating a sister wordmark.
 
 | `brand/backdrop-clean.png`
 | Text-free banner backdrop, 1536 x 1024.
