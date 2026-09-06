@@ -20,7 +20,7 @@ RUN npm run build
 
 # Use a lightweight Node.js image for the final build
 FROM node:22-alpine
-LABEL io.modelcontextprotocol.server.name="io.github.knowall-ai/reverie"
+LABEL io.modelcontextprotocol.server.name="ai.knowall/reverie"
 
 # Set the working directory inside the container
 WORKDIR /app
