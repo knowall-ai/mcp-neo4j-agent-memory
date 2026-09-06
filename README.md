@@ -161,6 +161,10 @@ This server now supports connecting to specific databases in Neo4j Enterprise Ed
 
 ## Installation
 
+### MCP Registry
+
+Reverie is listed in the [MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.knowall-ai/reverie` (the successor of the "Neo4j Agent Memory" entry that used to sit in the modelcontextprotocol/servers README). `server.json` in this repository is the listing; the release workflow republishes it on every tag.
+
 ### Installing via Smithery
 
 
