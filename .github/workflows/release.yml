@@ -3,8 +3,9 @@ name: Release
 # Publishes a tagged version: `git tag v0.4.0 && git push origin v0.4.0`.
 # - npm: @knowall-ai/reverie with provenance (needs the NPM_TOKEN secret, an npm automation token)
 # - GHCR: ghcr.io/knowall-ai/mcp-reverie:<version> and :latest (uses the built-in GITHUB_TOKEN)
-# - MCP Registry: io.github.knowall-ai/reverie (GitHub OIDC, no secret; runs after the npm publish
-#   because the registry verifies ownership via the published package's mcpName field)
+# - MCP Registry: ai.knowall/reverie under the knowall.ai domain namespace (DNS-verified: the apex
+#   TXT record "v=MCPv1; k=ed25519; p=…" plus the MCP_REGISTRY_PRIVATE_KEY secret); runs after the
+#   npm publish because the registry verifies ownership via the published package's mcpName field
 # Smithery redeploys from the repository on its own schedule; trigger a redeploy from the
 # Smithery dashboard after a release if the listing lags.
 
@@ -96,7 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # GitHub OIDC login to registry.modelcontextprotocol.io
+      id-token: write   # kept for npm provenance parity; the registry login is DNS-based
     steps:
       - uses: actions/checkout@v4
         with:
@@ -113,5 +114,8 @@ jobs:
           for v in "$(jq -r .version server.json)" "$(jq -r '.packages[0].version' server.json)"; do
             if [ "$v" != "$tag" ]; then echo "::error::server.json version $v does not match tag v$tag"; exit 1; fi
           done
-      - run: ./mcp-publisher login github-oidc
+      - name: Log in to the registry as knowall.ai (DNS namespace)
+        run: ./mcp-publisher login dns --domain=knowall.ai --private-key="$MCP_REGISTRY_PRIVATE_KEY"
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
       - run: ./mcp-publisher publish
