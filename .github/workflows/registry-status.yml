@@ -1,0 +1,78 @@
+name: MCP Registry status
+
+# Utility: mark a registry entry active, deprecated or deleted. Run from the Actions tab.
+# Logs in with GitHub OIDC, which grants the io.github.knowall-ai/* namespace (the entry
+# published before the move to ai.knowall/*); for ai.knowall/* entries use the DNS key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: Registry server name (e.g. io.github.knowall-ai/reverie)
+        required: true
+        default: io.github.knowall-ai/reverie
+      version:
+        description: Version to change; empty means every version
+        required: false
+        default: ""
+      status:
+        description: New status
+        required: true
+        type: choice
+        options: [deprecated, active, deleted]
+        default: deprecated
+      message:
+        description: Status message shown to clients (not allowed for active)
+        required: false
+        default: "Renamed to ai.knowall/reverie - use that entry"
+      namespace_auth:
+        description: How to log in
+        required: true
+        type: choice
+        options: [github-oidc, dns]
+        default: github-oidc
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    name: Set status
+    runs-on: ubuntu-latest
+    concurrency:
+      group: registry-status
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write   # GitHub OIDC login for io.github.knowall-ai/*
+    steps:
+      - name: Install mcp-publisher (pinned, checksum-verified)
+        run: |
+          curl -sSL -o mcp-publisher.tar.gz \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Log in
+        run: |
+          if [ "$AUTH" = "dns" ]; then
+            ./mcp-publisher login dns --domain=knowall.ai --private-key="$MCP_REGISTRY_PRIVATE_KEY"
+          else
+            ./mcp-publisher login github-oidc
+          fi
+        env:
+          AUTH: ${{ inputs.namespace_auth }}
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+      - name: Set status
+        run: |
+          set -- --status "$STATUS"
+          if [ "$STATUS" != "active" ] && [ -n "$MESSAGE" ]; then set -- "$@" --message "$MESSAGE"; fi
+          if [ -n "$VERSION" ]; then
+            ./mcp-publisher status "$@" "$SERVER" "$VERSION"
+          else
+            ./mcp-publisher status "$@" "$SERVER"
+          fi
+        env:
+          SERVER: ${{ inputs.server }}
+          VERSION: ${{ inputs.version }}
+          STATUS: ${{ inputs.status }}
+          MESSAGE: ${{ inputs.message }}
