@@ -1,0 +1,55 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.knowall-ai/reverie",
+  "title": "Reverie",
+  "description": "Graph memory that dreams: Neo4j knowledge-graph memory for AI agents with hybrid search",
+  "websiteUrl": "https://github.com/knowall-ai/mcp-reverie#readme",
+  "repository": {
+    "url": "https://github.com/knowall-ai/mcp-reverie",
+    "source": "github"
+  },
+  "version": "0.5.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@knowall-ai/reverie",
+      "version": "0.5.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NEO4J_URI",
+          "description": "Bolt URI of the Neo4j 5 database, e.g. bolt://localhost:7687",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "NEO4J_USERNAME",
+          "description": "Neo4j user",
+          "isRequired": true,
+          "isSecret": false
+        },
+        {
+          "name": "NEO4J_PASSWORD",
+          "description": "Neo4j password",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "NEO4J_DATABASE",
+          "description": "Database name (Enterprise only; omit on Community Edition)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "REVERIE_EMBEDDINGS",
+          "description": "Embedding provider for semantic search: local (default, no API key), openai, azure, ollama, voyage or none",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
