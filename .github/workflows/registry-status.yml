@@ -69,7 +69,7 @@ jobs:
           if [ -n "$VERSION" ]; then
             ./mcp-publisher status "$@" "$SERVER" "$VERSION"
           else
-            ./mcp-publisher status "$@" "$SERVER"
+            ./mcp-publisher status "$@" --all-versions --yes "$SERVER"
           fi
         env:
           SERVER: ${{ inputs.server }}
